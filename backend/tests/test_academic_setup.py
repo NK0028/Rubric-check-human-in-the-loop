@@ -25,6 +25,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         )
         assert course.status_code == 201, course.text
 
+        rostered_student = client.post(f"/api/courses/{course.json()['id']}/students", json={"name": "Ayesha Khan", "identifier": "FA21-BAI-042"})
+        assert rostered_student.status_code == 201, rostered_student.text
+        missing_student = client.post(f"/api/courses/{course.json()['id']}/students", json={"name": "Bilal Ahmed", "identifier": "FA21-BAI-043"})
+        assert missing_student.status_code == 201, missing_student.text
+
         exam = client.post(
             "/api/exams",
             json={"course_id": course.json()["id"], "title": "Midterm Examination"},
@@ -128,5 +133,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         assert progress.json()["uploaded_count"] == 2
         assert progress.json()["finalized_count"] == 1
         assert progress.json()["questions"][0]["finalized_count"] == 1
+
+        roster_progress = client.get(f"/api/exams/{exam.json()['id']}/roster-progress")
+        assert roster_progress.status_code == 200, roster_progress.text
+        assert roster_progress.json()["total_students"] == 2
+        assert roster_progress.json()["students_with_missing_submissions"] == 1
+        assert roster_progress.json()["students"][1]["missing_question_numbers"] == [1]
 
 print("Academic setup, OCR, finalization, results export, and review dashboard workflow verified.")

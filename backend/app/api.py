@@ -21,6 +21,7 @@ from .models import (
     Question,
     RubricCriterion,
     Submission,
+    Student,
 )
 from .ocr import OCRUnavailableError, extract_text
 from .schemas import (
@@ -41,6 +42,10 @@ from .schemas import (
     FinalEvaluationRead,
     ExamResultRow,
     SubmissionRead,
+    StudentCreate,
+    StudentExamProgressRead,
+    StudentRead,
+    RosterProgressRead,
 )
 from .storage import uploads_directory
 
@@ -160,6 +165,26 @@ def exam_progress(exam_id: int, session: Session) -> ExamProgressRead:
     return ExamProgressRead(exam_id=exam_id, question_count=len(questions), uploaded_count=len(submissions), finalized_count=sum(item.finalized_count for item in progress_questions), questions=progress_questions)
 
 
+def roster_progress(exam_id: int, session: Session) -> RosterProgressRead:
+    exam = session.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+    questions = session.scalars(select(Question).where(Question.exam_id == exam_id).order_by(Question.question_number)).all()
+    students = session.scalars(select(Student).where(Student.course_id == exam.course_id).order_by(Student.name)).all()
+    submissions = session.execute(select(Submission.student_identifier, Submission.question_id, Submission.status).join(Question).where(Question.exam_id == exam_id)).all()
+    by_student: dict[str, list[tuple[int, str]]] = {}
+    for identifier, question_id, submission_status in submissions:
+        if identifier:
+            by_student.setdefault(identifier, []).append((question_id, submission_status))
+    rows = []
+    for student in students:
+        attempts = by_student.get(student.identifier, [])
+        submitted_ids = {question_id for question_id, _ in attempts}
+        finalized_ids = {question_id for question_id, submission_status in attempts if submission_status == "finalized"}
+        rows.append(StudentExamProgressRead(student_id=student.id, name=student.name, identifier=student.identifier, submitted_questions=len(submitted_ids), finalized_questions=len(finalized_ids), missing_question_numbers=[question.question_number for question in questions if question.id not in submitted_ids]))
+    return RosterProgressRead(exam_id=exam_id, total_students=len(rows), students_with_missing_submissions=sum(bool(row.missing_question_numbers) for row in rows), students=rows)
+
+
 def baseline_score(text: str, criterion: RubricCriterion) -> tuple[float, str, str]:
     """Temporary explainable baseline used until a handwriting/LLM provider is configured."""
     source = criterion.expected_evidence or criterion.description
@@ -193,6 +218,28 @@ def create_course(payload: CourseCreate, session: Session = Depends(get_session)
 @router.get("/courses", response_model=list[CourseRead])
 def list_courses(session: Session = Depends(get_session)) -> list[Course]:
     return list(session.scalars(select(Course).order_by(Course.created_at.desc())))
+
+
+@router.post("/courses/{course_id}/students", response_model=StudentRead, status_code=status.HTTP_201_CREATED, tags=["roster"])
+def create_student(course_id: int, payload: StudentCreate, session: Session = Depends(get_session)) -> Student:
+    if not session.get(Course, course_id):
+        raise HTTPException(status_code=404, detail="Course not found.")
+    student = Student(course_id=course_id, name=payload.name.strip(), identifier=payload.identifier.strip())
+    session.add(student)
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="This student identifier is already in the course roster.") from error
+    session.refresh(student)
+    return student
+
+
+@router.get("/courses/{course_id}/students", response_model=list[StudentRead], tags=["roster"])
+def list_students(course_id: int, session: Session = Depends(get_session)) -> list[Student]:
+    if not session.get(Course, course_id):
+        raise HTTPException(status_code=404, detail="Course not found.")
+    return list(session.scalars(select(Student).where(Student.course_id == course_id).order_by(Student.name)))
 
 
 @router.post("/exams", response_model=ExamRead, status_code=status.HTTP_201_CREATED)
@@ -274,6 +321,11 @@ def export_exam_results(exam_id: int, session: Session = Depends(get_session)) -
 @router.get("/exams/{exam_id}/progress", response_model=ExamProgressRead, tags=["review dashboard"])
 def get_exam_progress(exam_id: int, session: Session = Depends(get_session)) -> ExamProgressRead:
     return exam_progress(exam_id, session)
+
+
+@router.get("/exams/{exam_id}/roster-progress", response_model=RosterProgressRead, tags=["roster"])
+def get_roster_progress(exam_id: int, session: Session = Depends(get_session)) -> RosterProgressRead:
+    return roster_progress(exam_id, session)
 
 
 @router.post("/submissions", response_model=SubmissionRead, status_code=status.HTTP_201_CREATED, tags=["submissions"])

@@ -18,6 +18,18 @@ class CourseRead(ORMModel):
     code: str
 
 
+class StudentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    identifier: str = Field(min_length=2, max_length=80)
+
+
+class StudentRead(ORMModel):
+    id: int
+    course_id: int
+    name: str
+    identifier: str
+
+
 class ExamCreate(BaseModel):
     course_id: int
     title: str = Field(min_length=2, max_length=160)
@@ -159,3 +171,19 @@ class ExamProgressRead(BaseModel):
     uploaded_count: int
     finalized_count: int
     questions: list[QuestionProgressRead]
+
+
+class StudentExamProgressRead(BaseModel):
+    student_id: int
+    name: str
+    identifier: str
+    submitted_questions: int
+    finalized_questions: int
+    missing_question_numbers: list[int]
+
+
+class RosterProgressRead(BaseModel):
+    exam_id: int
+    total_students: int
+    students_with_missing_submissions: int
+    students: list[StudentExamProgressRead]

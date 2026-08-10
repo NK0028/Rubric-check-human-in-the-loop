@@ -19,6 +19,7 @@ export default function Home() {
               <Link href="/submissions" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Upload answer sheets</Link>
               <Link href="/results" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">View results</Link>
               <Link href="/dashboard" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Review dashboard</Link>
+              <Link href="/roster" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Student roster</Link>
             </div>
           </div>
 
