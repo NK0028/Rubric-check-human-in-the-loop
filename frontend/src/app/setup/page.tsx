@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -30,9 +30,27 @@ export default function SetupPage() {
   const [selectedCourse, setSelectedCourse] = useState("");
   const [selectedExam, setSelectedExam] = useState("");
   const [rubric, setRubric] = useState<Criterion[]>(defaultRubric);
+  const [questionMaxMarks, setQuestionMaxMarks] = useState(6);
   const [notice, setNotice] = useState("Create your first course to begin.");
   const [saving, setSaving] = useState(false);
   const rubricTotal = useMemo(() => rubric.reduce((sum, item) => sum + Number(item.max_marks || 0), 0), [rubric]);
+
+  useEffect(() => {
+    request<Course[]>("/api/courses")
+      .then((items) => { setCourses(items); setNotice(items.length ? "Choose an existing course or create a new one." : "Create your first course to begin."); })
+      .catch((error) => setNotice(error instanceof Error ? error.message : "Unable to load courses."));
+  }, []);
+
+  async function selectCourse(event: ChangeEvent<HTMLSelectElement>) {
+    const value = event.target.value;
+    setSelectedCourse(value); setSelectedExam(""); setExams([]);
+    if (!value) return;
+    try {
+      const loaded = await request<Exam[]>(`/api/courses/${value}/exams`);
+      setExams(loaded);
+      setNotice(loaded.length ? "Choose an existing exam or create a new one." : "No exams exist for this course yet. Create one to continue.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to load exams."); }
+  }
 
   async function createCourse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,7 +59,7 @@ export default function SetupPage() {
     try {
       const course = await request<Course>("/api/courses", { method: "POST", body: JSON.stringify({ title: form.get("title"), code: form.get("code") }) });
       setCourses((items) => [course, ...items]);
-      setSelectedCourse(String(course.id));
+      setSelectedCourse(String(course.id)); setSelectedExam(""); setExams([]);
       event.currentTarget.reset();
       setNotice(`${course.code} created. Now add an exam.`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to create course."); } finally { setSaving(false); }
@@ -65,12 +83,13 @@ export default function SetupPage() {
     event.preventDefault();
     if (!selectedExam) return setNotice("Choose an exam first.");
     const form = new FormData(event.currentTarget);
-    const maxMarks = Number(form.get("max_marks"));
+    const maxMarks = questionMaxMarks;
     if (rubricTotal !== maxMarks) return setNotice(`Rubric total (${rubricTotal}) must equal question marks (${maxMarks}).`);
     setSaving(true);
     try {
       await request("/api/questions", { method: "POST", body: JSON.stringify({ exam_id: Number(selectedExam), question_number: Number(form.get("question_number")), prompt: form.get("prompt"), max_marks: maxMarks, reference_answer: form.get("reference_answer") || null, rubric }) });
       event.currentTarget.reset();
+      setQuestionMaxMarks(6);
       setNotice("Question and rubric saved. It is ready for answer-sheet evaluation.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to save question."); } finally { setSaving(false); }
   }
@@ -97,7 +116,7 @@ export default function SetupPage() {
 
           <form onSubmit={createExam} className="rounded-xl border border-slate-800 bg-slate-900 p-6">
             <h2 className="text-xl font-semibold">2. Create exam</h2>
-            <select required value={selectedCourse} onChange={(event) => setSelectedCourse(event.target.value)} className="field mt-5"><option value="">Select course</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select>
+            <select required value={selectedCourse} onChange={selectCourse} className="field mt-5"><option value="">Select course</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.code} — {course.title}</option>)}</select>
             <input required name="title" placeholder="Midterm Examination" className="field mt-3" />
             <input name="description" placeholder="Optional instructions" className="field mt-3" />
             <button disabled={saving} className="button mt-5">Save exam</button>
@@ -109,12 +128,12 @@ export default function SetupPage() {
           <div className="mt-5 grid gap-3 md:grid-cols-[1fr_120px_120px]">
             <select required value={selectedExam} onChange={(event) => setSelectedExam(event.target.value)} className="field"><option value="">Select exam</option>{exams.map((exam) => <option key={exam.id} value={exam.id}>{exam.title}</option>)}</select>
             <input required name="question_number" type="number" min="1" placeholder="Question #" className="field" />
-            <input required name="max_marks" type="number" min="0.5" step="0.5" defaultValue="6" className="field" />
+            <input required name="max_marks" type="number" min="0.5" step="0.5" value={questionMaxMarks} onChange={(event) => setQuestionMaxMarks(Number(event.target.value))} className="field" />
           </div>
           <textarea required name="prompt" placeholder="Write the question shown to students..." className="field mt-3 min-h-28" />
           <textarea name="reference_answer" placeholder="Optional reference answer or ideal solution..." className="field mt-3 min-h-24" />
 
-          <div className="mt-6 flex items-center justify-between"><h3 className="font-semibold">Rubric criteria</h3><span className={rubricTotal === 6 ? "text-cyan-400" : "text-amber-300"}>Current total: {rubricTotal} marks</span></div>
+          <div className="mt-6 flex items-center justify-between"><h3 className="font-semibold">Rubric criteria</h3><span className={rubricTotal === questionMaxMarks ? "text-cyan-400" : "text-amber-300"}>Current total: {rubricTotal} / {questionMaxMarks} marks</span></div>
           <div className="mt-3 space-y-3">{rubric.map((criterion, index) => <div key={index} className="grid gap-3 rounded-lg border border-slate-800 p-3 md:grid-cols-[1fr_2fr_110px_auto]"><input value={criterion.title} onChange={(event) => updateCriterion(index, "title", event.target.value)} className="field" /><input value={criterion.description} onChange={(event) => updateCriterion(index, "description", event.target.value)} className="field" /><input value={criterion.max_marks} onChange={(event) => updateCriterion(index, "max_marks", event.target.value)} type="number" min="0.5" step="0.5" className="field" /><button type="button" onClick={() => setRubric((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="text-sm text-rose-300">Remove</button></div>)}</div>
           <button type="button" onClick={() => setRubric((items) => [...items, { title: "New criterion", description: "Describe the evidence required.", max_marks: 1 }])} className="mt-4 text-sm font-semibold text-cyan-400">+ Add criterion</button>
           <button disabled={saving} className="button mt-6 block">Save question & rubric</button>
