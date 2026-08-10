@@ -30,8 +30,10 @@ from .schemas import (
     EvaluationRead,
     ExamCreate,
     ExamRead,
+    ExamProgressRead,
     QuestionCreate,
     QuestionRead,
+    QuestionProgressRead,
     RubricCriterionRead,
     ExtractionUpdate,
     FinalEvaluationCreate,
@@ -143,6 +145,21 @@ def csv_cell(value: object | None) -> object:
     return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
 
 
+def exam_progress(exam_id: int, session: Session) -> ExamProgressRead:
+    if not session.get(Exam, exam_id):
+        raise HTTPException(status_code=404, detail="Exam not found.")
+    questions = session.scalars(select(Question).where(Question.exam_id == exam_id).order_by(Question.question_number)).all()
+    submissions = session.execute(select(Submission.question_id, Submission.status).join(Question).where(Question.exam_id == exam_id)).all()
+    counts: dict[int, dict[str, int]] = {question.id: {} for question in questions}
+    for question_id, submission_status in submissions:
+        counts[question_id][submission_status] = counts[question_id].get(submission_status, 0) + 1
+    progress_questions = [
+        QuestionProgressRead(question_id=question.id, question_number=question.question_number, prompt=question.prompt, maximum_marks=question.max_marks, uploaded_count=sum(counts[question.id].values()), ocr_ready_count=counts[question.id].get("ocr_complete", 0), reviewed_count=counts[question.id].get("transcribed", 0), suggested_count=counts[question.id].get("suggested", 0), finalized_count=counts[question.id].get("finalized", 0))
+        for question in questions
+    ]
+    return ExamProgressRead(exam_id=exam_id, question_count=len(questions), uploaded_count=len(submissions), finalized_count=sum(item.finalized_count for item in progress_questions), questions=progress_questions)
+
+
 def baseline_score(text: str, criterion: RubricCriterion) -> tuple[float, str, str]:
     """Temporary explainable baseline used until a handwriting/LLM provider is configured."""
     source = criterion.expected_evidence or criterion.description
@@ -252,6 +269,11 @@ def export_exam_results(exam_id: int, session: Session = Depends(get_session)) -
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/exams/{exam_id}/progress", response_model=ExamProgressRead, tags=["review dashboard"])
+def get_exam_progress(exam_id: int, session: Session = Depends(get_session)) -> ExamProgressRead:
+    return exam_progress(exam_id, session)
 
 
 @router.post("/submissions", response_model=SubmissionRead, status_code=status.HTTP_201_CREATED, tags=["submissions"])

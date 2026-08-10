@@ -18,6 +18,7 @@ export default function Home() {
               <Link href="/setup" className="rounded-lg bg-cyan-400 px-5 py-3 font-semibold text-slate-950">Create an exam</Link>
               <Link href="/submissions" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Upload answer sheets</Link>
               <Link href="/results" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">View results</Link>
+              <Link href="/dashboard" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Review dashboard</Link>
             </div>
           </div>
 

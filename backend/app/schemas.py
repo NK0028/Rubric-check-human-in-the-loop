@@ -139,3 +139,23 @@ class ExamResultRow(BaseModel):
     maximum_marks: float
     teacher_feedback: str | None
     finalized_at: datetime | None
+
+
+class QuestionProgressRead(BaseModel):
+    question_id: int
+    question_number: int
+    prompt: str
+    maximum_marks: float
+    uploaded_count: int
+    ocr_ready_count: int
+    reviewed_count: int
+    suggested_count: int
+    finalized_count: int
+
+
+class ExamProgressRead(BaseModel):
+    exam_id: int
+    question_count: int
+    uploaded_count: int
+    finalized_count: int
+    questions: list[QuestionProgressRead]

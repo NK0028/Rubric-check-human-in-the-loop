@@ -123,4 +123,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         assert csv_export.headers["content-type"].startswith("text/csv")
         assert "Ayesha Khan" in csv_export.text
 
-print("Academic setup, OCR, teacher-finalization, and results-export workflow verified.")
+        progress = client.get(f"/api/exams/{exam.json()['id']}/progress")
+        assert progress.status_code == 200, progress.text
+        assert progress.json()["uploaded_count"] == 2
+        assert progress.json()["finalized_count"] == 1
+        assert progress.json()["questions"][0]["finalized_count"] == 1
+
+print("Academic setup, OCR, finalization, results export, and review dashboard workflow verified.")
