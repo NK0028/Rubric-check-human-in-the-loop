@@ -1,0 +1,1 @@
+"""RubriCheck AI application package."""
