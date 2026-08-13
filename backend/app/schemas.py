@@ -23,11 +23,21 @@ class StudentCreate(BaseModel):
     identifier: str = Field(min_length=2, max_length=80)
 
 
+class StudentUpdate(StudentCreate):
+    pass
+
+
 class StudentRead(ORMModel):
     id: int
     course_id: int
     name: str
     identifier: str
+
+
+class RosterImportRead(BaseModel):
+    added: int
+    updated: int
+    total: int
 
 
 class ExamCreate(BaseModel):

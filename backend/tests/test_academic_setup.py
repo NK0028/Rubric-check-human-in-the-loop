@@ -29,6 +29,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         assert rostered_student.status_code == 201, rostered_student.text
         missing_student = client.post(f"/api/courses/{course.json()['id']}/students", json={"name": "Bilal Ahmed", "identifier": "FA21-BAI-043"})
         assert missing_student.status_code == 201, missing_student.text
+        imported_roster = client.post(
+            f"/api/courses/{course.json()['id']}/students/import",
+            files={"file": ("roster.csv", b"name,identifier\nAyesha Khan Updated,FA21-BAI-042\nCathy Ali,FA21-BAI-044\n", "text/csv")},
+        )
+        assert imported_roster.status_code == 200, imported_roster.text
+        assert imported_roster.json()["added"] == 1
+        assert imported_roster.json()["updated"] == 1
+        removable_student = client.get(f"/api/courses/{course.json()['id']}/students").json()[-1]
+        deleted_student = client.delete(f"/api/courses/{course.json()['id']}/students/{removable_student['id']}")
+        assert deleted_student.status_code == 204, deleted_student.text
 
         exam = client.post(
             "/api/exams",

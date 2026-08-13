@@ -45,6 +45,8 @@ from .schemas import (
     StudentCreate,
     StudentExamProgressRead,
     StudentRead,
+    StudentUpdate,
+    RosterImportRead,
     RosterProgressRead,
 )
 from .storage import uploads_directory
@@ -240,6 +242,96 @@ def list_students(course_id: int, session: Session = Depends(get_session)) -> li
     if not session.get(Course, course_id):
         raise HTTPException(status_code=404, detail="Course not found.")
     return list(session.scalars(select(Student).where(Student.course_id == course_id).order_by(Student.name)))
+
+
+@router.put("/courses/{course_id}/students/{student_id}", response_model=StudentRead, tags=["roster"])
+def update_student(course_id: int, student_id: int, payload: StudentUpdate, session: Session = Depends(get_session)) -> Student:
+    student = session.get(Student, student_id)
+    if not student or student.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Student not found in this course roster.")
+    identifier = payload.identifier.strip()
+    if identifier != student.identifier:
+        has_submissions = session.scalar(
+            select(Submission.id)
+            .join(Question, Question.id == Submission.question_id)
+            .join(Exam, Exam.id == Question.exam_id)
+            .where(Exam.course_id == course_id, Submission.student_identifier == student.identifier)
+            .limit(1)
+        )
+        if has_submissions:
+            raise HTTPException(
+                status_code=409,
+                detail="A student with uploaded answers cannot have their student ID changed.",
+            )
+    student.name = payload.name.strip()
+    student.identifier = identifier
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="This student identifier is already in the course roster.") from error
+    session.refresh(student)
+    return student
+
+
+@router.delete("/courses/{course_id}/students/{student_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["roster"])
+def delete_student(course_id: int, student_id: int, session: Session = Depends(get_session)) -> Response:
+    student = session.get(Student, student_id)
+    if not student or student.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Student not found in this course roster.")
+    has_submissions = session.scalar(
+        select(Submission.id)
+        .join(Question, Question.id == Submission.question_id)
+        .join(Exam, Exam.id == Question.exam_id)
+        .where(Exam.course_id == course_id, Submission.student_identifier == student.identifier)
+        .limit(1)
+    )
+    if has_submissions:
+        raise HTTPException(status_code=409, detail="This student has uploaded answers and cannot be removed from the roster.")
+    session.delete(student)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/courses/{course_id}/students/import", response_model=RosterImportRead, tags=["roster"])
+async def import_students(course_id: int, file: UploadFile = File(...), session: Session = Depends(get_session)) -> RosterImportRead:
+    """Import or update a roster from UTF-8 CSV columns named `name` and `identifier`."""
+    if not session.get(Course, course_id):
+        raise HTTPException(status_code=404, detail="Course not found.")
+    if Path(file.filename or "").suffix.lower() != ".csv":
+        raise HTTPException(status_code=415, detail="Upload a CSV file with name and identifier columns.")
+    content = await file.read()
+    if not content or len(content) > 1_000_000:
+        raise HTTPException(status_code=422, detail="Upload a non-empty roster CSV smaller than 1 MB.")
+    try:
+        rows = list(csv.DictReader(StringIO(content.decode("utf-8-sig"))))
+    except UnicodeDecodeError as error:
+        raise HTTPException(status_code=422, detail="Roster CSV must use UTF-8 encoding.") from error
+    if not rows or not rows[0] or {"name", "identifier"} - {key.strip().lower() for key in rows[0] if key}:
+        raise HTTPException(status_code=422, detail="Roster CSV needs `name` and `identifier` column headers.")
+    parsed: list[tuple[str, str]] = []
+    seen_identifiers = set()
+    for index, row in enumerate(rows, start=2):
+        normalized = {(key or "").strip().lower(): (value or "").strip() for key, value in row.items()}
+        name, identifier = normalized.get("name", ""), normalized.get("identifier", "")
+        if not name or not identifier or len(name) > 160 or len(identifier) > 80:
+            raise HTTPException(status_code=422, detail=f"Invalid name or identifier on CSV row {index}.")
+        if identifier in seen_identifiers:
+            raise HTTPException(status_code=422, detail=f"Duplicate identifier `{identifier}` in the CSV.")
+        seen_identifiers.add(identifier)
+        parsed.append((name, identifier))
+    existing = {student.identifier: student for student in session.scalars(select(Student).where(Student.course_id == course_id))}
+    added = updated = 0
+    for name, identifier in parsed:
+        if student := existing.get(identifier):
+            if student.name != name:
+                student.name = name
+                updated += 1
+        else:
+            session.add(Student(course_id=course_id, name=name, identifier=identifier))
+            added += 1
+    session.commit()
+    return RosterImportRead(added=added, updated=updated, total=len(parsed))
 
 
 @router.post("/exams", response_model=ExamRead, status_code=status.HTTP_201_CREATED)
