@@ -398,6 +398,19 @@ def get_submission(submission_id: int, session: Session = Depends(get_session)) 
     return submission_response(submission)
 
 
+@router.get("/submissions/{submission_id}/final-evaluation", response_model=FinalEvaluationRead, tags=["evaluation"])
+def get_final_evaluation(submission_id: int, session: Session = Depends(get_session)) -> FinalEvaluationRead:
+    """Retrieve the teacher-approved score and criterion breakdown for an answer sheet."""
+    if not session.get(Submission, submission_id):
+        raise HTTPException(status_code=404, detail="Submission not found.")
+    final_evaluation = session.scalar(
+        select(FinalEvaluation).where(FinalEvaluation.submission_id == submission_id).order_by(FinalEvaluation.id.desc())
+    )
+    if not final_evaluation:
+        raise HTTPException(status_code=404, detail="No final marks have been recorded for this submission.")
+    return final_evaluation_response(final_evaluation, session)
+
+
 @router.post("/submissions/{submission_id}/ocr", response_model=SubmissionRead, tags=["submissions"])
 async def rerun_submission_ocr(submission_id: int, session: Session = Depends(get_session)) -> SubmissionRead:
     """Retry local OCR for a scan that had no text or was uploaded before Tesseract was installed."""

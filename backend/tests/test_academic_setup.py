@@ -116,6 +116,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         assert finalization.json()["awarded_total"] == evaluation.json()["suggested_total"]
         assert len(finalization.json()["criteria"]) == 3
 
+        stored_finalization = client.get(f"/api/submissions/{submission.json()['id']}/final-evaluation")
+        assert stored_finalization.status_code == 200, stored_finalization.text
+        assert stored_finalization.json()["teacher_feedback"] == "Approved after reviewing the scan."
+        assert len(stored_finalization.json()["criteria"]) == 3
+
         duplicate_finalization = client.post(
             f"/api/evaluations/{evaluation.json()['id']}/finalize", json=finalization_payload
         )
