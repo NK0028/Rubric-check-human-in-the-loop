@@ -8,6 +8,7 @@ const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type Course = { id: number; title: string; code: string };
 type Exam = { id: number; title: string };
 type Question = { id: number; question_number: number; prompt: string; max_marks: number };
+type Student = { id: number; name: string; identifier: string };
 type Submission = { id: number; student_name: string; student_identifier: string | null; original_filename: string; status: string; extracted_text: string | null; file_url: string };
 type Evaluation = { id: number; suggested_total: number; maximum_marks: number; method: string; status: string; criteria: { id: number; criterion_title: string; maximum_marks: number; awarded_marks: number; evidence: string; confidence: string }[] };
 type FinalEvaluation = { awarded_total: number; maximum_marks: number; teacher_feedback: string | null; criteria: { criterion_title: string; maximum_marks: number; awarded_marks: number; teacher_note: string | null }[] };
@@ -32,11 +33,15 @@ export default function SubmissionsPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [courseId, setCourseId] = useState("");
   const [examId, setExamId] = useState("");
   const [questionId, setQuestionId] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [studentName, setStudentName] = useState("");
+  const [studentIdentifier, setStudentIdentifier] = useState("");
+  const [rosterStudentId, setRosterStudentId] = useState("");
   const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null);
   const [transcript, setTranscript] = useState("");
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
@@ -51,9 +56,19 @@ export default function SubmissionsPage() {
 
   async function selectCourse(event: ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value;
-    setCourseId(value); setExamId(""); setQuestionId(""); setExams([]); setQuestions([]); setSubmissions([]); setSelectedSubmission(null); setEvaluation(null); setFinalization(null);
+    setCourseId(value); setExamId(""); setQuestionId(""); setExams([]); setQuestions([]); setStudents([]); setSubmissions([]); setSelectedSubmission(null); setEvaluation(null); setFinalization(null); setRosterStudentId(""); setStudentName(""); setStudentIdentifier("");
     if (!value) return;
-    try { setExams(await api<Exam[]>(`/api/courses/${value}/exams`)); } catch (error) { setNotice(error instanceof Error ? error.message : "Could not load exams."); }
+    try {
+      const [loadedExams, loadedStudents] = await Promise.all([api<Exam[]>(`/api/courses/${value}/exams`), api<Student[]>(`/api/courses/${value}/students`)]);
+      setExams(loadedExams); setStudents(loadedStudents);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Could not load course details."); }
+  }
+
+  function selectRosterStudent(event: ChangeEvent<HTMLSelectElement>) {
+    const value = event.target.value;
+    setRosterStudentId(value);
+    const student = students.find((item) => item.id === Number(value));
+    if (student) { setStudentName(student.name); setStudentIdentifier(student.identifier); }
   }
 
   async function selectExam(event: ChangeEvent<HTMLSelectElement>) {
@@ -82,7 +97,7 @@ export default function SubmissionsPage() {
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "Upload failed.");
       setSubmissions((items) => [body as Submission, ...items]);
-      setFile(null); event.currentTarget.reset();
+      setFile(null); setStudentName(""); setStudentIdentifier(""); setRosterStudentId(""); event.currentTarget.reset();
       setNotice(`${body.original_filename} was added to the review queue.`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Upload failed."); } finally { setUploading(false); }
   }
@@ -163,7 +178,7 @@ export default function SubmissionsPage() {
           <select value={questionId} onChange={selectQuestion} disabled={!examId} className="field"><option value="">Select question</option>{questions.map((question) => <option key={question.id} value={question.id}>Q{question.question_number} — {question.max_marks} marks</option>)}</select>
         </div>{questionId && <p className="mt-4 text-sm text-slate-400">{questions.find((question) => question.id === Number(questionId))?.prompt}</p>}</section>
 
-        <form onSubmit={upload} className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Upload a student answer</h2><div className="mt-5 grid gap-3 md:grid-cols-2"><input required name="student_name" placeholder="Student name" className="field" /><input name="student_identifier" placeholder="Roll number (optional)" className="field" /></div><label className="mt-4 block rounded-lg border border-dashed border-slate-600 bg-slate-950 p-6 text-center text-sm text-slate-400"><input required type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-300" />{file && <span className="mt-3 block text-cyan-300">Ready: {file.name}</span>}</label><button disabled={uploading || !questionId} className="button mt-5">{uploading ? "Uploading…" : "Add to review queue"}</button></form>
+        <form onSubmit={upload} className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Upload a student answer</h2>{students.length > 0 && <select value={rosterStudentId} onChange={selectRosterStudent} className="field mt-5"><option value="">Choose a rostered student (recommended)</option>{students.map((student) => <option key={student.id} value={student.id}>{student.identifier} — {student.name}</option>)}</select>}<div className="mt-3 grid gap-3 md:grid-cols-2"><input required name="student_name" value={studentName} onChange={(event) => { setStudentName(event.target.value); setRosterStudentId(""); }} placeholder="Student name" className="field" /><input name="student_identifier" value={studentIdentifier} onChange={(event) => { setStudentIdentifier(event.target.value); setRosterStudentId(""); }} placeholder="Roll number (optional)" className="field" /></div>{students.length > 0 && <p className="mt-2 text-sm text-slate-400">Choosing a rostered student keeps missing-submission tracking accurate.</p>}<label className="mt-4 block rounded-lg border border-dashed border-slate-600 bg-slate-950 p-6 text-center text-sm text-slate-400"><input required type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-300" />{file && <span className="mt-3 block text-cyan-300">Ready: {file.name}</span>}</label><button disabled={uploading || !questionId} className="button mt-5">{uploading ? "Uploading…" : "Add to review queue"}</button></form>
 
         <section className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Review queue</h2>{submissions.length === 0 ? <p className="mt-4 text-slate-400">No submissions loaded for this question yet.</p> : <div className="mt-4 divide-y divide-slate-800">{submissions.map((submission) => <div key={submission.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><p className="font-semibold">{submission.student_name} {submission.student_identifier && <span className="text-slate-400">· {submission.student_identifier}</span>}</p><p className="text-sm text-slate-400">{submission.original_filename}</p></div><div className="flex items-center gap-3"><span className="rounded-full bg-amber-400/15 px-3 py-1 text-sm text-amber-300">{statusLabel[submission.status] ?? submission.status}</span><a href={`${apiUrl}${submission.file_url}`} target="_blank" rel="noreferrer" className="text-sm font-semibold text-cyan-400">View scan</a><button type="button" onClick={() => beginReview(submission)} className="text-sm font-semibold text-cyan-400">Review</button></div></div>)}</div>}</section>
 
