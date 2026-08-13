@@ -434,6 +434,13 @@ def create_baseline_evaluation(submission_id: int, session: Session = Depends(ge
     submission = session.get(Submission, submission_id)
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found.")
+    latest_evaluation = session.scalar(
+        select(Evaluation)
+        .where(Evaluation.submission_id == submission_id)
+        .order_by(Evaluation.created_at.desc(), Evaluation.id.desc())
+    )
+    if latest_evaluation:
+        return evaluation_response(latest_evaluation, session)
     if not submission.extracted_text:
         raise HTTPException(status_code=422, detail="Save a reviewed transcript before requesting a score suggestion.")
     question = session.get(Question, submission.question_id)

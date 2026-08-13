@@ -97,6 +97,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         assert evaluation.json()["method"] == "keyword_baseline"
         assert len(evaluation.json()["criteria"]) == 3
 
+        repeated_evaluation = client.post(f"/api/submissions/{submission.json()['id']}/evaluate")
+        assert repeated_evaluation.status_code == 201, repeated_evaluation.text
+        assert repeated_evaluation.json()["id"] == evaluation.json()["id"]
+
         finalization_payload = {
             "criteria": [
                 {"evaluation_criterion_id": criterion["id"], "awarded_marks": criterion["awarded_marks"]}
