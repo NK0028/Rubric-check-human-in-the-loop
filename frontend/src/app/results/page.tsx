@@ -10,7 +10,7 @@ type Exam = { id: number; title: string };
 type Result = { final_evaluation_id: number; submission_id: number; student_name: string; student_identifier: string | null; question_number: number; question_prompt: string; awarded_total: number; maximum_marks: number; teacher_feedback: string | null; finalized_at: string | null };
 
 async function api<T>(path: string): Promise<T> {
-  const response = await fetch(`${apiUrl}${path}`);
+  const response = await fetch(`${apiUrl}${path}`, { credentials: "include" });
   if (!response.ok) throw new Error("Could not load results.");
   return response.json() as Promise<T>;
 }

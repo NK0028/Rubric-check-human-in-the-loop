@@ -24,7 +24,7 @@ const statusLabel: Record<string, string> = {
 };
 
 async function api<T>(path: string): Promise<T> {
-  const response = await fetch(`${apiUrl}${path}`);
+  const response = await fetch(`${apiUrl}${path}`, { credentials: "include" });
   if (!response.ok) throw new Error("Could not load the requested data.");
   return response.json() as Promise<T>;
 }
@@ -93,7 +93,7 @@ export default function SubmissionsPage() {
     form.append("file", file);
     setUploading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/submissions`, { method: "POST", body: form });
+      const response = await fetch(`${apiUrl}/api/submissions`, { method: "POST", body: form, credentials: "include" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "Upload failed.");
       setSubmissions((items) => [body as Submission, ...items]);
@@ -118,7 +118,7 @@ export default function SubmissionsPage() {
   async function saveTranscript() {
     if (!selectedSubmission || transcript.trim().length < 2) return setNotice("Enter at least a short reviewed transcript.");
     try {
-      const response = await fetch(`${apiUrl}/api/submissions/${selectedSubmission.id}/extraction`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ extracted_text: transcript }) });
+      const response = await fetch(`${apiUrl}/api/submissions/${selectedSubmission.id}/extraction`, { method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ extracted_text: transcript }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "Could not save transcript.");
       setSelectedSubmission(body as Submission); setSubmissions((items) => items.map((item) => item.id === body.id ? body : item));
@@ -130,7 +130,7 @@ export default function SubmissionsPage() {
     if (!selectedSubmission) return;
     setRunningOcr(true);
     try {
-      const response = await fetch(`${apiUrl}/api/submissions/${selectedSubmission.id}/ocr`, { method: "POST" });
+      const response = await fetch(`${apiUrl}/api/submissions/${selectedSubmission.id}/ocr`, { method: "POST", credentials: "include" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "Could not run local OCR.");
       const updated = body as Submission;
@@ -144,7 +144,7 @@ export default function SubmissionsPage() {
     if (!selectedSubmission) return setNotice("Choose a submission first.");
     if (!selectedSubmission.extracted_text && transcript.trim().length < 2) return setNotice("Save the transcript before requesting a score suggestion.");
     try {
-      const response = await fetch(`${apiUrl}/api/submissions/${selectedSubmission.id}/evaluate`, { method: "POST" });
+      const response = await fetch(`${apiUrl}/api/submissions/${selectedSubmission.id}/evaluate`, { method: "POST", credentials: "include" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "Could not create suggestion.");
       const suggested = body as Evaluation;
@@ -156,7 +156,7 @@ export default function SubmissionsPage() {
   async function finalizeEvaluation() {
     if (!evaluation || !selectedSubmission) return;
     try {
-      const response = await fetch(`${apiUrl}/api/evaluations/${evaluation.id}/finalize`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ criteria: evaluation.criteria.map((criterion) => ({ evaluation_criterion_id: criterion.id, awarded_marks: Number(teacherMarks[criterion.id] ?? criterion.awarded_marks) })), teacher_feedback: teacherFeedback || null }) });
+      const response = await fetch(`${apiUrl}/api/evaluations/${evaluation.id}/finalize`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ criteria: evaluation.criteria.map((criterion) => ({ evaluation_criterion_id: criterion.id, awarded_marks: Number(teacherMarks[criterion.id] ?? criterion.awarded_marks) })), teacher_feedback: teacherFeedback || null }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "Could not record final marks.");
       setFinalization(body as FinalEvaluation);

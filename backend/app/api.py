@@ -6,11 +6,13 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import get_session
+from .auth import SESSION_COOKIE, get_current_user, hash_password, issue_session, verify_password
 from .models import (
     Course,
     Evaluation,
@@ -22,6 +24,7 @@ from .models import (
     RubricCriterion,
     Submission,
     Student,
+    User,
 )
 from .ocr import OCRUnavailableError, extract_text
 from .schemas import (
@@ -48,12 +51,92 @@ from .schemas import (
     StudentUpdate,
     RosterImportRead,
     RosterProgressRead,
+    LoginRequest,
+    RegisterRequest,
+    UserRead,
 )
 from .storage import uploads_directory
 
-router = APIRouter(prefix="/api", tags=["academic setup"])
+auth_router = APIRouter(prefix="/api/auth", tags=["authentication"])
+router = APIRouter(prefix="/api", tags=["academic setup"], dependencies=[Depends(get_current_user)])
 allowed_upload_suffixes = {".jpg", ".jpeg", ".png", ".webp", ".pdf"}
 maximum_upload_size = 10 * 1024 * 1024
+
+
+@auth_router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, response: Response, session: Session = Depends(get_session)) -> User:
+    email = payload.email.strip().lower()
+    if session.scalar(select(User).where(User.email == email)):
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+    user = User(name=payload.name.strip(), email=email, password_hash=hash_password(payload.password))
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    issue_session(response, user, session)
+    return user
+
+
+@auth_router.post("/login", response_model=UserRead)
+def login(payload: LoginRequest, response: Response, session: Session = Depends(get_session)) -> User:
+    user = session.scalar(select(User).where(User.email == payload.email.strip().lower()))
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+    issue_session(response, user, session)
+    return user
+
+
+@auth_router.get("/me", response_model=UserRead)
+def current_user(user: User = Depends(get_current_user)) -> User:
+    return user
+
+
+@auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(response: Response) -> Response:
+    response.delete_cookie(SESSION_COOKIE)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def owned_course(course_id: int, user: User, session: Session) -> Course:
+    course = session.get(Course, course_id)
+    if not course or course.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Course not found.")
+    return course
+
+
+def owned_exam(exam_id: int, user: User, session: Session) -> Exam:
+    exam = session.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+    owned_course(exam.course_id, user, session)
+    return exam
+
+
+def owned_question(question_id: int, user: User, session: Session) -> Question:
+    question = session.get(Question, question_id)
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found.")
+    owned_exam(question.exam_id, user, session)
+    return question
+
+
+def owned_submission(submission_id: int, user: User, session: Session) -> Submission:
+    submission = session.get(Submission, submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found.")
+    owned_question(submission.question_id, user, session)
+    return submission
+
+
+@router.get("/uploads/{stored_filename}", tags=["submissions"])
+def download_upload(stored_filename: str, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> FileResponse:
+    submission = session.scalar(select(Submission).where(Submission.stored_filename == stored_filename))
+    if not submission:
+        raise HTTPException(status_code=404, detail="Answer sheet not found.")
+    owned_question(submission.question_id, user, session)
+    file_path = uploads_directory / submission.stored_filename
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="The stored answer sheet is unavailable.")
+    return FileResponse(file_path, media_type=submission.content_type, filename=submission.original_filename)
 
 
 def question_response(question: Question, session: Session) -> QuestionRead:
@@ -81,7 +164,7 @@ def submission_response(submission: Submission) -> SubmissionRead:
         content_type=submission.content_type,
         status=submission.status,
         extracted_text=submission.extracted_text,
-        file_url=f"/uploads/{submission.stored_filename}",
+        file_url=f"/api/uploads/{submission.stored_filename}",
     )
 
 
@@ -205,8 +288,8 @@ def baseline_score(text: str, criterion: RubricCriterion) -> tuple[float, str, s
 
 
 @router.post("/courses", response_model=CourseRead, status_code=status.HTTP_201_CREATED)
-def create_course(payload: CourseCreate, session: Session = Depends(get_session)) -> Course:
-    course = Course(title=payload.title, code=payload.code.upper())
+def create_course(payload: CourseCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Course:
+    course = Course(title=payload.title, code=payload.code.upper(), owner_id=user.id)
     session.add(course)
     try:
         session.commit()
@@ -218,14 +301,13 @@ def create_course(payload: CourseCreate, session: Session = Depends(get_session)
 
 
 @router.get("/courses", response_model=list[CourseRead])
-def list_courses(session: Session = Depends(get_session)) -> list[Course]:
-    return list(session.scalars(select(Course).order_by(Course.created_at.desc())))
+def list_courses(session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Course]:
+    return list(session.scalars(select(Course).where(Course.owner_id == user.id).order_by(Course.created_at.desc())))
 
 
 @router.post("/courses/{course_id}/students", response_model=StudentRead, status_code=status.HTTP_201_CREATED, tags=["roster"])
-def create_student(course_id: int, payload: StudentCreate, session: Session = Depends(get_session)) -> Student:
-    if not session.get(Course, course_id):
-        raise HTTPException(status_code=404, detail="Course not found.")
+def create_student(course_id: int, payload: StudentCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Student:
+    owned_course(course_id, user, session)
     student = Student(course_id=course_id, name=payload.name.strip(), identifier=payload.identifier.strip())
     session.add(student)
     try:
@@ -238,14 +320,14 @@ def create_student(course_id: int, payload: StudentCreate, session: Session = De
 
 
 @router.get("/courses/{course_id}/students", response_model=list[StudentRead], tags=["roster"])
-def list_students(course_id: int, session: Session = Depends(get_session)) -> list[Student]:
-    if not session.get(Course, course_id):
-        raise HTTPException(status_code=404, detail="Course not found.")
+def list_students(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Student]:
+    owned_course(course_id, user, session)
     return list(session.scalars(select(Student).where(Student.course_id == course_id).order_by(Student.name)))
 
 
 @router.put("/courses/{course_id}/students/{student_id}", response_model=StudentRead, tags=["roster"])
-def update_student(course_id: int, student_id: int, payload: StudentUpdate, session: Session = Depends(get_session)) -> Student:
+def update_student(course_id: int, student_id: int, payload: StudentUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Student:
+    owned_course(course_id, user, session)
     student = session.get(Student, student_id)
     if not student or student.course_id != course_id:
         raise HTTPException(status_code=404, detail="Student not found in this course roster.")
@@ -275,7 +357,8 @@ def update_student(course_id: int, student_id: int, payload: StudentUpdate, sess
 
 
 @router.delete("/courses/{course_id}/students/{student_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["roster"])
-def delete_student(course_id: int, student_id: int, session: Session = Depends(get_session)) -> Response:
+def delete_student(course_id: int, student_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Response:
+    owned_course(course_id, user, session)
     student = session.get(Student, student_id)
     if not student or student.course_id != course_id:
         raise HTTPException(status_code=404, detail="Student not found in this course roster.")
@@ -294,10 +377,9 @@ def delete_student(course_id: int, student_id: int, session: Session = Depends(g
 
 
 @router.post("/courses/{course_id}/students/import", response_model=RosterImportRead, tags=["roster"])
-async def import_students(course_id: int, file: UploadFile = File(...), session: Session = Depends(get_session)) -> RosterImportRead:
+async def import_students(course_id: int, file: UploadFile = File(...), session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> RosterImportRead:
     """Import or update a roster from UTF-8 CSV columns named `name` and `identifier`."""
-    if not session.get(Course, course_id):
-        raise HTTPException(status_code=404, detail="Course not found.")
+    owned_course(course_id, user, session)
     if Path(file.filename or "").suffix.lower() != ".csv":
         raise HTTPException(status_code=415, detail="Upload a CSV file with name and identifier columns.")
     content = await file.read()
@@ -335,9 +417,8 @@ async def import_students(course_id: int, file: UploadFile = File(...), session:
 
 
 @router.post("/exams", response_model=ExamRead, status_code=status.HTTP_201_CREATED)
-def create_exam(payload: ExamCreate, session: Session = Depends(get_session)) -> Exam:
-    if not session.get(Course, payload.course_id):
-        raise HTTPException(status_code=404, detail="Course not found.")
+def create_exam(payload: ExamCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Exam:
+    owned_course(payload.course_id, user, session)
     exam = Exam(**payload.model_dump())
     session.add(exam)
     session.commit()
@@ -346,16 +427,14 @@ def create_exam(payload: ExamCreate, session: Session = Depends(get_session)) ->
 
 
 @router.get("/courses/{course_id}/exams", response_model=list[ExamRead])
-def list_course_exams(course_id: int, session: Session = Depends(get_session)) -> list[Exam]:
-    if not session.get(Course, course_id):
-        raise HTTPException(status_code=404, detail="Course not found.")
+def list_course_exams(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Exam]:
+    owned_course(course_id, user, session)
     return list(session.scalars(select(Exam).where(Exam.course_id == course_id).order_by(Exam.created_at.desc())))
 
 
 @router.post("/questions", response_model=QuestionRead, status_code=status.HTTP_201_CREATED)
-def create_question(payload: QuestionCreate, session: Session = Depends(get_session)) -> QuestionRead:
-    if not session.get(Exam, payload.exam_id):
-        raise HTTPException(status_code=404, detail="Exam not found.")
+def create_question(payload: QuestionCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> QuestionRead:
+    owned_exam(payload.exam_id, user, session)
     rubric_total = sum(item.max_marks for item in payload.rubric)
     if abs(rubric_total - payload.max_marks) > 0.001:
         raise HTTPException(status_code=422, detail="Rubric criterion marks must equal the question's maximum marks.")
@@ -370,22 +449,23 @@ def create_question(payload: QuestionCreate, session: Session = Depends(get_sess
 
 
 @router.get("/exams/{exam_id}/questions", response_model=list[QuestionRead])
-def list_exam_questions(exam_id: int, session: Session = Depends(get_session)) -> list[QuestionRead]:
-    if not session.get(Exam, exam_id):
-        raise HTTPException(status_code=404, detail="Exam not found.")
+def list_exam_questions(exam_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[QuestionRead]:
+    owned_exam(exam_id, user, session)
     questions = session.scalars(select(Question).where(Question.exam_id == exam_id).order_by(Question.question_number)).all()
     return [question_response(question, session) for question in questions]
 
 
 @router.get("/exams/{exam_id}/results", response_model=list[ExamResultRow], tags=["results"])
-def list_exam_results(exam_id: int, session: Session = Depends(get_session)) -> list[ExamResultRow]:
+def list_exam_results(exam_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[ExamResultRow]:
     """List every teacher-finalized question result for an exam."""
+    owned_exam(exam_id, user, session)
     return exam_results(exam_id, session)
 
 
 @router.get("/exams/{exam_id}/results.csv", tags=["results"])
-def export_exam_results(exam_id: int, session: Session = Depends(get_session)) -> Response:
+def export_exam_results(exam_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Response:
     """Download finalized results in a gradebook-friendly CSV format."""
+    owned_exam(exam_id, user, session)
     results = exam_results(exam_id, session)
     output = StringIO()
     writer = csv.writer(output)
@@ -411,12 +491,14 @@ def export_exam_results(exam_id: int, session: Session = Depends(get_session)) -
 
 
 @router.get("/exams/{exam_id}/progress", response_model=ExamProgressRead, tags=["review dashboard"])
-def get_exam_progress(exam_id: int, session: Session = Depends(get_session)) -> ExamProgressRead:
+def get_exam_progress(exam_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> ExamProgressRead:
+    owned_exam(exam_id, user, session)
     return exam_progress(exam_id, session)
 
 
 @router.get("/exams/{exam_id}/roster-progress", response_model=RosterProgressRead, tags=["roster"])
-def get_roster_progress(exam_id: int, session: Session = Depends(get_session)) -> RosterProgressRead:
+def get_roster_progress(exam_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> RosterProgressRead:
+    owned_exam(exam_id, user, session)
     return roster_progress(exam_id, session)
 
 
@@ -427,10 +509,10 @@ async def upload_submission(
     student_identifier: str | None = Form(None),
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> SubmissionRead:
     """Store a scanned answer and immediately attempt local, on-device OCR."""
-    if not session.get(Question, question_id):
-        raise HTTPException(status_code=404, detail="Question not found.")
+    owned_question(question_id, user, session)
     original_filename = file.filename or "answer-sheet"
     suffix = Path(original_filename).suffix.lower()
     if suffix not in allowed_upload_suffixes:
@@ -473,9 +555,8 @@ async def run_submission_ocr(submission: Submission, session: Session) -> None:
 
 
 @router.get("/questions/{question_id}/submissions", response_model=list[SubmissionRead], tags=["submissions"])
-def list_question_submissions(question_id: int, session: Session = Depends(get_session)) -> list[SubmissionRead]:
-    if not session.get(Question, question_id):
-        raise HTTPException(status_code=404, detail="Question not found.")
+def list_question_submissions(question_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[SubmissionRead]:
+    owned_question(question_id, user, session)
     submissions = session.scalars(
         select(Submission).where(Submission.question_id == question_id).order_by(Submission.uploaded_at.desc())
     ).all()
@@ -483,18 +564,15 @@ def list_question_submissions(question_id: int, session: Session = Depends(get_s
 
 
 @router.get("/submissions/{submission_id}", response_model=SubmissionRead, tags=["submissions"])
-def get_submission(submission_id: int, session: Session = Depends(get_session)) -> SubmissionRead:
-    submission = session.get(Submission, submission_id)
-    if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found.")
+def get_submission(submission_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> SubmissionRead:
+    submission = owned_submission(submission_id, user, session)
     return submission_response(submission)
 
 
 @router.get("/submissions/{submission_id}/final-evaluation", response_model=FinalEvaluationRead, tags=["evaluation"])
-def get_final_evaluation(submission_id: int, session: Session = Depends(get_session)) -> FinalEvaluationRead:
+def get_final_evaluation(submission_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> FinalEvaluationRead:
     """Retrieve the teacher-approved score and criterion breakdown for an answer sheet."""
-    if not session.get(Submission, submission_id):
-        raise HTTPException(status_code=404, detail="Submission not found.")
+    owned_submission(submission_id, user, session)
     final_evaluation = session.scalar(
         select(FinalEvaluation).where(FinalEvaluation.submission_id == submission_id).order_by(FinalEvaluation.id.desc())
     )
@@ -504,11 +582,9 @@ def get_final_evaluation(submission_id: int, session: Session = Depends(get_sess
 
 
 @router.post("/submissions/{submission_id}/ocr", response_model=SubmissionRead, tags=["submissions"])
-async def rerun_submission_ocr(submission_id: int, session: Session = Depends(get_session)) -> SubmissionRead:
+async def rerun_submission_ocr(submission_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> SubmissionRead:
     """Retry local OCR for a scan that had no text or was uploaded before Tesseract was installed."""
-    submission = session.get(Submission, submission_id)
-    if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found.")
+    submission = owned_submission(submission_id, user, session)
     if submission.status in {"transcribed", "suggested", "finalized"}:
         raise HTTPException(status_code=409, detail="OCR cannot replace a teacher-reviewed transcript.")
     await run_submission_ocr(submission, session)
@@ -520,11 +596,10 @@ def save_extraction(
     submission_id: int,
     payload: ExtractionUpdate,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> SubmissionRead:
     """Save the teacher-reviewed version of the locally extracted transcript."""
-    submission = session.get(Submission, submission_id)
-    if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found.")
+    submission = owned_submission(submission_id, user, session)
     if submission.status == "finalized":
         raise HTTPException(status_code=409, detail="A finalized transcript cannot be changed.")
     submission.extracted_text = payload.extracted_text.strip()
@@ -535,10 +610,8 @@ def save_extraction(
 
 
 @router.post("/submissions/{submission_id}/evaluate", response_model=EvaluationRead, status_code=status.HTTP_201_CREATED, tags=["evaluation"])
-def create_baseline_evaluation(submission_id: int, session: Session = Depends(get_session)) -> EvaluationRead:
-    submission = session.get(Submission, submission_id)
-    if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found.")
+def create_baseline_evaluation(submission_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> EvaluationRead:
+    submission = owned_submission(submission_id, user, session)
     latest_evaluation = session.scalar(
         select(Evaluation)
         .where(Evaluation.submission_id == submission_id)
@@ -587,11 +660,13 @@ def finalize_evaluation(
     evaluation_id: int,
     payload: FinalEvaluationCreate,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> FinalEvaluationRead:
     """Persist the teacher-approved criterion marks for a score suggestion."""
     evaluation = session.get(Evaluation, evaluation_id)
     if not evaluation:
         raise HTTPException(status_code=404, detail="Score suggestion not found.")
+    owned_submission(evaluation.submission_id, user, session)
     if session.scalar(select(FinalEvaluation).where(FinalEvaluation.evaluation_id == evaluation_id)):
         raise HTTPException(status_code=409, detail="This score suggestion has already been finalized.")
 

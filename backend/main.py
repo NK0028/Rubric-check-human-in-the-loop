@@ -2,10 +2,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from app.api import router as academic_setup_router
-from app.database import Base, engine
+from app.api import auth_router, router as academic_setup_router
+from app.database import Base, engine, migrate_legacy_schema
 import app.models  # noqa: F401 - imports model metadata before create_all
 from app.storage import uploads_directory
 
@@ -13,6 +12,7 @@ from app.storage import uploads_directory
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    migrate_legacy_schema()
     yield
 
 
@@ -32,7 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(academic_setup_router)
-app.mount("/uploads", StaticFiles(directory=uploads_directory), name="uploads")
+app.include_router(auth_router)
 
 
 @app.get("/api/health", tags=["system"])

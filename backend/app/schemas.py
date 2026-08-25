@@ -7,6 +7,23 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RegisterRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    email: str = Field(min_length=5, max_length=255)
+    password: str = Field(min_length=10, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserRead(ORMModel):
+    id: int
+    name: str
+    email: str
+
+
 class CourseCreate(BaseModel):
     title: str = Field(min_length=2, max_length=160)
     code: str = Field(min_length=2, max_length=40)

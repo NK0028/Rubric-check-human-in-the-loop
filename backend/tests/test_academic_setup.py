@@ -19,11 +19,25 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     from main import app
 
     with TestClient(app) as client:
+        assert client.get("/api/courses").status_code == 401
+        registered = client.post(
+            "/api/auth/register",
+            json={"name": "Test Teacher", "email": "teacher@example.com", "password": "test-password-123"},
+        )
+        assert registered.status_code == 201, registered.text
         course = client.post(
             "/api/courses",
             json={"title": "Design and Analysis of Algorithms", "code": "DAA-101"},
         )
         assert course.status_code == 201, course.text
+
+        with TestClient(app) as other_teacher:
+            other_registered = other_teacher.post(
+                "/api/auth/register",
+                json={"name": "Other Teacher", "email": "other@example.com", "password": "other-password-123"},
+            )
+            assert other_registered.status_code == 201, other_registered.text
+            assert other_teacher.get(f"/api/courses/{course.json()['id']}/students").status_code == 404
 
         rostered_student = client.post(f"/api/courses/{course.json()['id']}/students", json={"name": "Ayesha Khan", "identifier": "FA21-BAI-042"})
         assert rostered_student.status_code == 201, rostered_student.text

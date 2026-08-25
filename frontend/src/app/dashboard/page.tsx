@@ -7,7 +7,7 @@ const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type Course = { id: number; title: string; code: string };
 type Exam = { id: number; title: string };
 type Progress = { question_count: number; uploaded_count: number; finalized_count: number; questions: { question_id: number; question_number: number; prompt: string; maximum_marks: number; uploaded_count: number; ocr_ready_count: number; reviewed_count: number; suggested_count: number; finalized_count: number }[] };
-async function api<T>(path: string): Promise<T> { const response = await fetch(`${apiUrl}${path}`); if (!response.ok) throw new Error("Could not load progress."); return response.json() as Promise<T>; }
+async function api<T>(path: string): Promise<T> { const response = await fetch(`${apiUrl}${path}`, { credentials: "include" }); if (!response.ok) throw new Error("Could not load progress."); return response.json() as Promise<T>; }
 
 export default function DashboardPage() {
   const [courses, setCourses] = useState<Course[]>([]); const [exams, setExams] = useState<Exam[]>([]); const [courseId, setCourseId] = useState(""); const [examId, setExamId] = useState(""); const [progress, setProgress] = useState<Progress | null>(null); const [notice, setNotice] = useState("Choose an exam to see its marking progress.");

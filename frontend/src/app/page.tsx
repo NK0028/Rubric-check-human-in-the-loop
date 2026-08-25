@@ -6,7 +6,7 @@ export default function Home() {
       <div className="mx-auto max-w-6xl">
         <nav className="mb-14 flex items-center justify-between">
           <span className="text-xl font-bold tracking-tight">RubriCheck <span className="text-cyan-400">AI</span></span>
-          <span className="rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-300">Teacher workspace</span>
+          <Link href="/auth" className="rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-300">Teacher sign in</Link>
         </nav>
 
         <section className="grid gap-10 lg:grid-cols-[1.25fr_0.75fr] lg:items-center">
@@ -15,7 +15,7 @@ export default function Home() {
             <h1 className="max-w-3xl text-5xl font-bold tracking-tight sm:text-6xl">Fairer feedback. Less marking time.</h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">Create question-specific rubrics, review handwritten answers, and approve evidence-based AI mark suggestions—without giving up teacher control.</p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link href="/setup" className="rounded-lg bg-cyan-400 px-5 py-3 font-semibold text-slate-950">Create an exam</Link>
+              <Link href="/auth" className="rounded-lg bg-cyan-400 px-5 py-3 font-semibold text-slate-950">Open teacher workspace</Link>
               <Link href="/submissions" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Upload answer sheets</Link>
               <Link href="/results" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">View results</Link>
               <Link href="/dashboard" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Review dashboard</Link>
