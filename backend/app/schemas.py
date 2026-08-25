@@ -181,6 +181,30 @@ class ExamResultRow(BaseModel):
     finalized_at: datetime | None
 
 
+class StudentGradebookRow(BaseModel):
+    student_id: int
+    name: str
+    identifier: str
+    submitted_questions: int
+    finalized_questions: int
+    total_questions: int
+    awarded_total: float
+    maximum_marks: float
+
+
+class StudentReportRead(BaseModel):
+    exam_id: int
+    exam_title: str
+    student_id: int
+    student_name: str
+    student_identifier: str
+    awarded_total: float
+    maximum_marks: float
+    finalized_questions: int
+    total_questions: int
+    results: list[ExamResultRow]
+
+
 class QuestionProgressRead(BaseModel):
     question_id: int
     question_number: int

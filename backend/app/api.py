@@ -44,6 +44,8 @@ from .schemas import (
     FinalEvaluationCriterionRead,
     FinalEvaluationRead,
     ExamResultRow,
+    StudentGradebookRow,
+    StudentReportRead,
     SubmissionRead,
     StudentCreate,
     StudentExamProgressRead,
@@ -224,6 +226,35 @@ def exam_results(exam_id: int, session: Session) -> list[ExamResultRow]:
             finalized_at=final_evaluation.finalized_at,
         )
         for final_evaluation, submission, question in rows
+    ]
+
+
+def exam_gradebook(exam: Exam, session: Session) -> list[StudentGradebookRow]:
+    questions = session.scalars(select(Question).where(Question.exam_id == exam.id).order_by(Question.question_number)).all()
+    results = exam_results(exam.id, session)
+    students = session.scalars(select(Student).where(Student.course_id == exam.course_id).order_by(Student.name)).all()
+    by_identifier: dict[str, list[ExamResultRow]] = {}
+    for result in results:
+        if result.student_identifier:
+            by_identifier.setdefault(result.student_identifier, []).append(result)
+    submissions = session.execute(select(Submission.student_identifier, Submission.question_id).join(Question).where(Question.exam_id == exam.id)).all()
+    submitted_by_identifier: dict[str, set[int]] = {}
+    for identifier, question_id in submissions:
+        if identifier:
+            submitted_by_identifier.setdefault(identifier, set()).add(question_id)
+    maximum_marks = round(sum(question.max_marks for question in questions), 2)
+    return [
+        StudentGradebookRow(
+            student_id=student.id,
+            name=student.name,
+            identifier=student.identifier,
+            submitted_questions=len(submitted_by_identifier.get(student.identifier, set())),
+            finalized_questions=len(by_identifier.get(student.identifier, [])),
+            total_questions=len(questions),
+            awarded_total=round(sum(result.awarded_total for result in by_identifier.get(student.identifier, [])), 2),
+            maximum_marks=maximum_marks,
+        )
+        for student in students
     ]
 
 
@@ -480,6 +511,35 @@ def list_exam_results(exam_id: int, session: Session = Depends(get_session), use
     return exam_results(exam_id, session)
 
 
+@router.get("/exams/{exam_id}/gradebook", response_model=list[StudentGradebookRow], tags=["results"])
+def get_exam_gradebook(exam_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[StudentGradebookRow]:
+    """Return every rostered student, including those with incomplete submissions."""
+    exam = owned_exam(exam_id, user, session)
+    return exam_gradebook(exam, session)
+
+
+@router.get("/exams/{exam_id}/students/{student_id}/report", response_model=StudentReportRead, tags=["results"])
+def get_student_report(exam_id: int, student_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> StudentReportRead:
+    exam = owned_exam(exam_id, user, session)
+    student = session.get(Student, student_id)
+    if not student or student.course_id != exam.course_id:
+        raise HTTPException(status_code=404, detail="Student not found in this exam's roster.")
+    gradebook_row = next(item for item in exam_gradebook(exam, session) if item.student_id == student.id)
+    results = [item for item in exam_results(exam.id, session) if item.student_identifier == student.identifier]
+    return StudentReportRead(
+        exam_id=exam.id,
+        exam_title=exam.title,
+        student_id=student.id,
+        student_name=student.name,
+        student_identifier=student.identifier,
+        awarded_total=gradebook_row.awarded_total,
+        maximum_marks=gradebook_row.maximum_marks,
+        finalized_questions=gradebook_row.finalized_questions,
+        total_questions=gradebook_row.total_questions,
+        results=results,
+    )
+
+
 @router.get("/exams/{exam_id}/results.csv", tags=["results"])
 def export_exam_results(exam_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Response:
     """Download finalized results in a gradebook-friendly CSV format."""
@@ -506,6 +566,18 @@ def export_exam_results(exam_id: int, session: Session = Depends(get_session), u
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/exams/{exam_id}/gradebook.csv", tags=["results"])
+def export_exam_gradebook(exam_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Response:
+    exam = owned_exam(exam_id, user, session)
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Student name", "Student identifier", "Submitted questions", "Finalized questions", "Total questions", "Exam total", "Maximum marks", "Percentage"])
+    for row in exam_gradebook(exam, session):
+        percentage = round((row.awarded_total / row.maximum_marks) * 100, 2) if row.maximum_marks else 0
+        writer.writerow([csv_cell(row.name), csv_cell(row.identifier), row.submitted_questions, row.finalized_questions, row.total_questions, row.awarded_total, row.maximum_marks, percentage])
+    return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="rubricheck-exam-{exam_id}-gradebook.csv"'})
 
 
 @router.get("/exams/{exam_id}/progress", response_model=ExamProgressRead, tags=["review dashboard"])

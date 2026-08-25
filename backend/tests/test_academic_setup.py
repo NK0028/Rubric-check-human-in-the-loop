@@ -157,10 +157,25 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         assert results.json()[0]["student_name"] == "Ayesha Khan"
         assert results.json()[0]["awarded_total"] == finalization.json()["awarded_total"]
 
+        gradebook = client.get(f"/api/exams/{exam.json()['id']}/gradebook")
+        assert gradebook.status_code == 200, gradebook.text
+        assert len(gradebook.json()) == 2
+        assert gradebook.json()[0]["total_questions"] == 1
+        ayesha = next(item for item in gradebook.json() if item["identifier"] == "FA21-BAI-042")
+        assert ayesha["awarded_total"] == finalization.json()["awarded_total"]
+        report = client.get(f"/api/exams/{exam.json()['id']}/students/{ayesha['student_id']}/report")
+        assert report.status_code == 200, report.text
+        assert report.json()["student_identifier"] == "FA21-BAI-042"
+        assert report.json()["results"][0]["teacher_feedback"] == "Approved after reviewing the scan."
+
         csv_export = client.get(f"/api/exams/{exam.json()['id']}/results.csv")
         assert csv_export.status_code == 200, csv_export.text
         assert csv_export.headers["content-type"].startswith("text/csv")
         assert "Ayesha Khan" in csv_export.text
+
+        gradebook_export = client.get(f"/api/exams/{exam.json()['id']}/gradebook.csv")
+        assert gradebook_export.status_code == 200, gradebook_export.text
+        assert "Finalized questions" in gradebook_export.text
 
         progress = client.get(f"/api/exams/{exam.json()['id']}/progress")
         assert progress.status_code == 200, progress.text
