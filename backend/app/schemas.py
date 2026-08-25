@@ -127,6 +127,7 @@ class EvaluationCriterionRead(ORMModel):
     awarded_marks: float
     evidence: str
     confidence: str
+    feedback_suggestion: str
 
 
 class EvaluationRead(ORMModel):

@@ -117,6 +117,7 @@ class EvaluationCriterion(Base):
     awarded_marks: Mapped[float] = mapped_column(Float)
     evidence: Mapped[str] = mapped_column(Text)
     confidence: Mapped[str] = mapped_column(String(20))
+    feedback_suggestion: Mapped[str] = mapped_column(Text, default="")
 
 
 class FinalEvaluation(Base):

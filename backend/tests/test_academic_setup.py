@@ -120,6 +120,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         assert evaluation.status_code == 201, evaluation.text
         assert evaluation.json()["method"] == "keyword_baseline"
         assert len(evaluation.json()["criteria"]) == 3
+        assert all(item["feedback_suggestion"] for item in evaluation.json()["criteria"])
 
         repeated_evaluation = client.post(f"/api/submissions/{submission.json()['id']}/evaluate")
         assert repeated_evaluation.status_code == 201, repeated_evaluation.text

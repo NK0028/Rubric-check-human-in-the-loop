@@ -270,21 +270,39 @@ def roster_progress(exam_id: int, session: Session) -> RosterProgressRead:
     return RosterProgressRead(exam_id=exam_id, total_students=len(rows), students_with_missing_submissions=sum(bool(row.missing_question_numbers) for row in rows), students=rows)
 
 
-def baseline_score(text: str, criterion: RubricCriterion) -> tuple[float, str, str]:
-    """Temporary explainable baseline used until a handwriting/LLM provider is configured."""
+def baseline_score(text: str, criterion: RubricCriterion) -> tuple[float, str, str, str]:
+    """Provide an explainable local signal; teachers always approve the final marks."""
     source = criterion.expected_evidence or criterion.description
     terms = {
         word.lower()
         for word in re.findall(r"[a-zA-Z]{4,}", source)
         if word.lower() not in {"that", "with", "this", "whether", "student", "answer", "shows", "checks", "uses", "valid"}
     }
-    matched = sorted(term for term in terms if term in text.lower())
+    normalized_text = text.lower()
+    matched = sorted(term for term in terms if re.search(rf"\b{re.escape(term)}\b", normalized_text))
     ratio = len(matched) / len(terms) if terms else 0
-    if ratio >= 0.5:
-        return criterion.max_marks, f"Matched rubric terms: {', '.join(matched)}.", "low"
+    matching_sentence = next((sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", text) if any(term in sentence.lower() for term in matched)), "")
+    if ratio >= 0.8:
+        awarded, confidence = criterion.max_marks, "medium"
+    elif ratio >= 0.5:
+        awarded, confidence = round(criterion.max_marks * 0.75, 2), "low"
+    elif ratio >= 0.25:
+        awarded, confidence = round(criterion.max_marks * 0.5, 2), "low"
+    elif matched:
+        awarded, confidence = round(criterion.max_marks * 0.25, 2), "low"
+    else:
+        awarded, confidence = 0, "low"
     if matched:
-        return round(criterion.max_marks / 2, 2), f"Partial evidence found: {', '.join(matched)}.", "low"
-    return 0, "No baseline keyword evidence found; teacher review is required.", "low"
+        evidence = f"Matched rubric terms: {', '.join(matched)}." + (f" Context: {matching_sentence}" if matching_sentence else "")
+    else:
+        evidence = "No rubric terms were detected; teacher review is required."
+    if awarded == criterion.max_marks:
+        feedback = f"Strong work on {criterion.title}: the answer addresses {', '.join(matched)}."
+    elif awarded:
+        feedback = f"Develop {criterion.title} further. The answer mentions {', '.join(matched)}, but needs clearer or more complete evidence."
+    else:
+        feedback = f"Add evidence for {criterion.title}; the reviewed transcript did not show the expected rubric ideas."
+    return awarded, evidence, confidence, feedback
 
 
 @router.post("/courses", response_model=CourseRead, status_code=status.HTTP_201_CREATED)
@@ -645,8 +663,9 @@ def create_baseline_evaluation(submission_id: int, session: Session = Depends(ge
                 awarded_marks=score,
                 evidence=evidence,
                 confidence=confidence,
+                feedback_suggestion=feedback_suggestion,
             )
-            for criterion, score, evidence, confidence in scored_criteria
+            for criterion, score, evidence, confidence, feedback_suggestion in scored_criteria
         ]
     )
     submission.status = "suggested"

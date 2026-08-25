@@ -23,10 +23,15 @@ def get_session() -> Generator[Session, None, None]:
 
 
 def migrate_legacy_schema() -> None:
-    """Apply the one additive migration needed by the local SQLite prototype."""
+    """Apply additive migrations needed by the local SQLite prototype."""
     inspector = inspect(engine)
     if "courses" in inspector.get_table_names():
         columns = {column["name"] for column in inspector.get_columns("courses")}
         if "owner_id" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE courses ADD COLUMN owner_id INTEGER"))
+    if "evaluation_criteria" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("evaluation_criteria")}
+        if "feedback_suggestion" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE evaluation_criteria ADD COLUMN feedback_suggestion TEXT NOT NULL DEFAULT ''"))
