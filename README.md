@@ -97,3 +97,15 @@ databases should use the managed backup process supplied by their provider.
 2. AI provides a transparent recommendation, not an unreviewed final grade.
 3. Every suggested score includes criterion-level evidence and confidence.
 4. Teacher overrides are recorded to improve future evaluation quality.
+
+## Automated checks
+
+Every push and pull request runs the GitHub Actions workflow in
+`.github/workflows/ci.yml`. It installs from lockfiles, runs the authenticated
+backend workflow test, then lints and production-builds the Next.js frontend.
+Run the same checks locally with:
+
+```bash
+cd backend && uv sync --locked && uv run python tests/test_academic_setup.py
+cd ../frontend && npm ci && npm run lint && npx next build --webpack
+```

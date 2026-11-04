@@ -28,6 +28,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
             json={"name": "Test Teacher", "email": "teacher@example.com", "password": "test-password-123"},
         )
         assert registered.status_code == 201, registered.text
+        assert "httponly" in registered.headers["set-cookie"].lower()
+        duplicate_registration = client.post(
+            "/api/auth/register",
+            json={"name": "Test Teacher", "email": "teacher@example.com", "password": "test-password-123"},
+        )
+        assert duplicate_registration.status_code == 409, duplicate_registration.text
+        incorrect_login = client.post(
+            "/api/auth/login",
+            json={"email": "teacher@example.com", "password": "not-the-password"},
+        )
+        assert incorrect_login.status_code == 401, incorrect_login.text
         course = client.post(
             "/api/courses",
             json={"title": "Design and Analysis of Algorithms", "code": "DAA-101"},
