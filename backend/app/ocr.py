@@ -5,6 +5,7 @@ as the API.  No answer-sheet image or extracted text is sent to a third party.
 """
 
 import os
+import shutil
 from io import BytesIO
 from pathlib import Path
 
@@ -15,6 +16,11 @@ import pytesseract
 
 class OCRUnavailableError(RuntimeError):
     """Raised when the local Tesseract executable cannot be used."""
+
+
+def tesseract_available() -> bool:
+    """Return whether the configured local Tesseract executable can be found."""
+    return shutil.which(os.getenv("TESSERACT_CMD", "tesseract")) is not None
 
 
 def _prepare_image(image: Image.Image) -> Image.Image:

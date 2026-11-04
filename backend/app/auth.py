@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .database import get_session
+from .config import cookie_secure
 from .models import AuthSession, User
 
 SESSION_COOKIE = "rubricheck_session"
@@ -34,7 +35,7 @@ def issue_session(response: Response, user: User, session: Session) -> None:
     session.execute(delete(AuthSession).where(AuthSession.user_id == user.id, AuthSession.expires_at < datetime.now(UTC)))
     session.add(AuthSession(user_id=user.id, token_hash=sha256(raw_token.encode()).hexdigest(), expires_at=expiry))
     session.commit()
-    response.set_cookie(SESSION_COOKIE, raw_token, httponly=True, samesite="lax", secure=False, max_age=SESSION_DAYS * 86400)
+    response.set_cookie(SESSION_COOKIE, raw_token, httponly=True, samesite="lax", secure=cookie_secure, max_age=SESSION_DAYS * 86400)
 
 
 def get_current_user(

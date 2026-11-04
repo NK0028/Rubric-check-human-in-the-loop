@@ -17,13 +17,13 @@ on PATH.
 
 Visit http://localhost:8000
 
-### Deploy to FastAPI Cloud
+### Runtime configuration
 
-Sign up and log in at https://fastapicloud.com, then deploy with:
-
-```bash
-uv run fastapi deploy
-```
+Copy the names in `.env.example` into your hosting provider's environment
+configuration. For production, set `APP_ENV=production`, explicit HTTPS values
+for `CORS_ORIGINS` and `ALLOWED_HOSTS`, and `COOKIE_SECURE=true`. The API does
+not load `.env` files itself, which prevents local development settings from
+silently being used in production.
 
 ## Project Structure
 

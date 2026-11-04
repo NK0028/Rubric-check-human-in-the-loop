@@ -19,6 +19,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     from main import app
 
     with TestClient(app) as client:
+        health = client.get("/api/health")
+        assert health.status_code == 200, health.text
+        assert health.json()["status"] == "ok"
         assert client.get("/api/courses").status_code == 401
         registered = client.post(
             "/api/auth/register",
