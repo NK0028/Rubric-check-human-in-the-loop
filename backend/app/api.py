@@ -4,16 +4,17 @@ from io import StringIO
 import re
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Cookie, Depends, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import get_session
-from .auth import SESSION_COOKIE, get_current_user, hash_password, issue_session, verify_password
+from .auth import SESSION_COOKIE, get_current_user, hash_password, issue_session, revoke_session, verify_password
 from .models import (
+    AuthSession,
     Course,
     Evaluation,
     EvaluationCriterion,
@@ -54,6 +55,7 @@ from .schemas import (
     RosterImportRead,
     RosterProgressRead,
     LoginRequest,
+    PasswordChangeRequest,
     RegisterRequest,
     UserRead,
 )
@@ -93,9 +95,30 @@ def current_user(user: User = Depends(get_current_user)) -> User:
 
 
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(response: Response) -> Response:
+def logout(
+    response: Response,
+    session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    session: Session = Depends(get_session),
+) -> None:
+    revoke_session(session_token, session)
     response.delete_cookie(SESSION_COOKIE)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@auth_router.put("/password", response_model=UserRead)
+def change_password(
+    payload: PasswordChangeRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> User:
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect.")
+    user.password_hash = hash_password(payload.new_password)
+    session.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
+    session.commit()
+    session.refresh(user)
+    issue_session(response, user, session)
+    return user
 
 
 def owned_course(course_id: int, user: User, session: Session) -> Course:

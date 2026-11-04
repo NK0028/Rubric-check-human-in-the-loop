@@ -38,6 +38,12 @@ def issue_session(response: Response, user: User, session: Session) -> None:
     response.set_cookie(SESSION_COOKIE, raw_token, httponly=True, samesite="lax", secure=cookie_secure, max_age=SESSION_DAYS * 86400)
 
 
+def revoke_session(session_token: str | None, session: Session) -> None:
+    if session_token:
+        session.execute(delete(AuthSession).where(AuthSession.token_hash == sha256(session_token.encode()).hexdigest()))
+        session.commit()
+
+
 def get_current_user(
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
     session: Session = Depends(get_session),

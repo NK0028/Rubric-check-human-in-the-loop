@@ -39,6 +39,29 @@ with tempfile.TemporaryDirectory() as temporary_directory:
             json={"email": "teacher@example.com", "password": "not-the-password"},
         )
         assert incorrect_login.status_code == 401, incorrect_login.text
+        invalid_password_change = client.put(
+            "/api/auth/password",
+            json={"current_password": "not-the-password", "new_password": "new-test-password-456"},
+        )
+        assert invalid_password_change.status_code == 401, invalid_password_change.text
+        changed_password = client.put(
+            "/api/auth/password",
+            json={"current_password": "test-password-123", "new_password": "new-test-password-456"},
+        )
+        assert changed_password.status_code == 200, changed_password.text
+        logged_out = client.post("/api/auth/logout")
+        assert logged_out.status_code == 204, logged_out.text
+        assert client.get("/api/courses").status_code == 401
+        old_password_login = client.post(
+            "/api/auth/login",
+            json={"email": "teacher@example.com", "password": "test-password-123"},
+        )
+        assert old_password_login.status_code == 401, old_password_login.text
+        new_password_login = client.post(
+            "/api/auth/login",
+            json={"email": "teacher@example.com", "password": "new-test-password-456"},
+        )
+        assert new_password_login.status_code == 200, new_password_login.text
         course = client.post(
             "/api/courses",
             json={"title": "Design and Analysis of Algorithms", "code": "DAA-101"},
