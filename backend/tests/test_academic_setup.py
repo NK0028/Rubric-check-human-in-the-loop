@@ -142,6 +142,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         assert question.json()["max_marks"] == 6
         assert len(question.json()["rubric"]) == 3
 
+        with patch("app.api.extract_text", return_value="A batch OCR draft."):
+            batch = client.post(
+                "/api/submissions/batch",
+                data={"question_id": question.json()["id"]},
+                files=[("files", ("FA21-BAI-043_Q1.png", b"bilal-batch-scan", "image/png"))],
+            )
+        assert batch.status_code == 201, batch.text
+        assert len(batch.json()["uploaded"]) == 1
+        assert batch.json()["uploaded"][0]["student_identifier"] == "FA21-BAI-043"
+        assert batch.json()["uploaded"][0]["status"] == "ocr_complete"
+
         with patch("app.api.extract_text", return_value="A locally extracted answer."):
             submission = client.post(
                 "/api/submissions",
@@ -243,14 +254,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
         progress = client.get(f"/api/exams/{exam.json()['id']}/progress")
         assert progress.status_code == 200, progress.text
-        assert progress.json()["uploaded_count"] == 2
+        assert progress.json()["uploaded_count"] == 3
         assert progress.json()["finalized_count"] == 1
         assert progress.json()["questions"][0]["finalized_count"] == 1
 
         roster_progress = client.get(f"/api/exams/{exam.json()['id']}/roster-progress")
         assert roster_progress.status_code == 200, roster_progress.text
         assert roster_progress.json()["total_students"] == 2
-        assert roster_progress.json()["students_with_missing_submissions"] == 1
-        assert roster_progress.json()["students"][1]["missing_question_numbers"] == [1]
+        assert roster_progress.json()["students_with_missing_submissions"] == 0
+        assert roster_progress.json()["students"][1]["missing_question_numbers"] == []
 
 print("Academic setup, OCR, finalization, results export, and review dashboard workflow verified.")

@@ -51,6 +51,7 @@ from .schemas import (
     StudentGradebookRow,
     StudentReportRead,
     SubmissionRead,
+    BatchUploadRead,
     StudentCreate,
     StudentExamProgressRead,
     StudentRead,
@@ -717,6 +718,72 @@ async def upload_submission(
     session.refresh(submission)
     await run_submission_ocr(submission, session)
     return submission_response(submission)
+
+
+@router.post("/submissions/batch", response_model=BatchUploadRead, status_code=status.HTTP_201_CREATED, tags=["submissions"])
+async def upload_submission_batch(
+    question_id: int = Form(...),
+    files: list[UploadFile] = File(...),
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> BatchUploadRead:
+    """Upload up to 20 scans whose filenames each contain one rostered student ID."""
+    question = owned_question(question_id, user, session)
+    active_exam(question.exam_id, user, session)
+    if not files or len(files) > 20:
+        raise HTTPException(status_code=422, detail="Upload between 1 and 20 answer sheets at a time.")
+    exam = session.get(Exam, question.exam_id)
+    assert exam is not None
+    roster = list(session.scalars(select(Student).where(Student.course_id == exam.course_id)))
+    if not roster:
+        raise HTTPException(status_code=422, detail="Add students to the course roster before using bulk upload.")
+
+    prepared: list[tuple[UploadFile, str, bytes, Student]] = []
+    matched_students: set[int] = set()
+    total_size = 0
+    for file in files:
+        original_filename = file.filename or "answer-sheet"
+        suffix = Path(original_filename).suffix.lower()
+        if suffix not in allowed_upload_suffixes:
+            raise HTTPException(status_code=415, detail=f"{original_filename}: upload a PDF, JPG, JPEG, PNG, or WEBP answer sheet.")
+        filename_key = original_filename.lower()
+        matches = [student for student in roster if student.identifier.lower() in filename_key]
+        if len(matches) != 1:
+            raise HTTPException(status_code=422, detail=f"{original_filename}: filename must contain exactly one rostered student ID.")
+        student = matches[0]
+        if student.id in matched_students:
+            raise HTTPException(status_code=422, detail=f"{original_filename}: only one answer sheet per student can be uploaded in a batch.")
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=422, detail=f"{original_filename}: the uploaded file is empty.")
+        if len(content) > maximum_upload_size:
+            raise HTTPException(status_code=413, detail=f"{original_filename}: answer sheets must be 10 MB or smaller.")
+        total_size += len(content)
+        if total_size > 50 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="A bulk upload must be 50 MB or smaller.")
+        matched_students.add(student.id)
+        prepared.append((file, original_filename, content, student))
+
+    submissions: list[Submission] = []
+    for file, original_filename, content, student in prepared:
+        suffix = Path(original_filename).suffix.lower()
+        stored_filename = f"{uuid4().hex}{suffix}"
+        (uploads_directory / stored_filename).write_bytes(content)
+        submission = Submission(
+            question_id=question_id,
+            student_name=student.name,
+            student_identifier=student.identifier,
+            original_filename=original_filename,
+            stored_filename=stored_filename,
+            content_type=file.content_type,
+        )
+        session.add(submission)
+        submissions.append(submission)
+    session.commit()
+    for submission in submissions:
+        session.refresh(submission)
+        await run_submission_ocr(submission, session)
+    return BatchUploadRead(uploaded=[submission_response(submission) for submission in submissions])
 
 
 async def run_submission_ocr(submission: Submission, session: Session) -> None:

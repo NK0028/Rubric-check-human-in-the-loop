@@ -10,6 +10,7 @@ type Exam = { id: number; title: string };
 type Question = { id: number; question_number: number; prompt: string; max_marks: number };
 type Student = { id: number; name: string; identifier: string };
 type Submission = { id: number; student_name: string; student_identifier: string | null; original_filename: string; status: string; extracted_text: string | null; file_url: string };
+type BatchUpload = { uploaded: Submission[] };
 type Evaluation = { id: number; suggested_total: number; maximum_marks: number; method: string; status: string; criteria: { id: number; criterion_title: string; maximum_marks: number; awarded_marks: number; evidence: string; confidence: string; feedback_suggestion: string }[] };
 type FinalEvaluation = { awarded_total: number; maximum_marks: number; teacher_feedback: string | null; criteria: { criterion_title: string; maximum_marks: number; awarded_marks: number; teacher_note: string | null }[] };
 
@@ -39,6 +40,7 @@ export default function SubmissionsPage() {
   const [examId, setExamId] = useState("");
   const [questionId, setQuestionId] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
   const [studentName, setStudentName] = useState("");
   const [studentIdentifier, setStudentIdentifier] = useState("");
   const [rosterStudentId, setRosterStudentId] = useState("");
@@ -100,6 +102,23 @@ export default function SubmissionsPage() {
       setFile(null); setStudentName(""); setStudentIdentifier(""); setRosterStudentId(""); event.currentTarget.reset();
       setNotice(`${body.original_filename} was added to the review queue.`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Upload failed."); } finally { setUploading(false); }
+  }
+
+  async function uploadBatch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!questionId || batchFiles.length === 0) return setNotice("Select a question and at least one scan before bulk uploading.");
+    const form = new FormData();
+    form.append("question_id", questionId);
+    batchFiles.forEach((batchFile) => form.append("files", batchFile));
+    setUploading(true);
+    try {
+      const response = await fetch(`${apiUrl}/api/submissions/batch`, { method: "POST", body: form, credentials: "include" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail ?? "Bulk upload failed.");
+      const uploaded = (body as BatchUpload).uploaded;
+      setSubmissions((items) => [...uploaded, ...items]); setBatchFiles([]); event.currentTarget.reset();
+      setNotice(`${uploaded.length} answer sheet${uploaded.length === 1 ? "" : "s"} added to the review queue.`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Bulk upload failed."); } finally { setUploading(false); }
   }
 
   async function beginReview(submission: Submission) {
@@ -185,6 +204,8 @@ export default function SubmissionsPage() {
         </div>{questionId && <p className="mt-4 text-sm text-slate-400">{questions.find((question) => question.id === Number(questionId))?.prompt}</p>}</section>
 
         <form onSubmit={upload} className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Upload a student answer</h2>{students.length > 0 && <select value={rosterStudentId} onChange={selectRosterStudent} className="field mt-5"><option value="">Choose a rostered student (recommended)</option>{students.map((student) => <option key={student.id} value={student.id}>{student.identifier} — {student.name}</option>)}</select>}<div className="mt-3 grid gap-3 md:grid-cols-2"><input required name="student_name" value={studentName} onChange={(event) => { setStudentName(event.target.value); setRosterStudentId(""); }} placeholder="Student name" className="field" /><input name="student_identifier" value={studentIdentifier} onChange={(event) => { setStudentIdentifier(event.target.value); setRosterStudentId(""); }} placeholder="Roll number (optional)" className="field" /></div>{students.length > 0 && <p className="mt-2 text-sm text-slate-400">Choosing a rostered student keeps missing-submission tracking accurate.</p>}<label className="mt-4 block rounded-lg border border-dashed border-slate-600 bg-slate-950 p-6 text-center text-sm text-slate-400"><input required type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-300" />{file && <span className="mt-3 block text-cyan-300">Ready: {file.name}</span>}</label><button disabled={uploading || !questionId} className="button mt-5">{uploading ? "Uploading…" : "Add to review queue"}</button></form>
+
+        <form onSubmit={uploadBatch} className="mt-6 rounded-xl border border-cyan-400/30 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Bulk upload rostered answers</h2><p className="mt-2 text-sm text-slate-400">Choose up to 20 scans for this question. Every filename must contain exactly one rostered student ID, for example <code>FA21-BAI-042_Q1.png</code>.</p><label className="mt-4 block rounded-lg border border-dashed border-cyan-400/40 bg-slate-950 p-5 text-sm text-slate-400"><input required multiple type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={(event) => setBatchFiles(Array.from(event.target.files ?? []))} className="block w-full text-sm text-slate-300" />{batchFiles.length > 0 && <span className="mt-3 block text-cyan-300">Ready to match and upload: {batchFiles.length} file{batchFiles.length === 1 ? "" : "s"}</span>}</label><button disabled={uploading || !questionId || batchFiles.length === 0} className="button mt-5">{uploading ? "Uploading…" : "Upload matched batch"}</button></form>
 
         <section className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Review queue</h2>{submissions.length === 0 ? <p className="mt-4 text-slate-400">No submissions loaded for this question yet.</p> : <div className="mt-4 divide-y divide-slate-800">{submissions.map((submission) => <div key={submission.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><p className="font-semibold">{submission.student_name} {submission.student_identifier && <span className="text-slate-400">· {submission.student_identifier}</span>}</p><p className="text-sm text-slate-400">{submission.original_filename}</p></div><div className="flex items-center gap-3"><span className="rounded-full bg-amber-400/15 px-3 py-1 text-sm text-amber-300">{statusLabel[submission.status] ?? submission.status}</span><a href={`${apiUrl}${submission.file_url}`} target="_blank" rel="noreferrer" className="text-sm font-semibold text-cyan-400">View scan</a><button type="button" onClick={() => beginReview(submission)} className="text-sm font-semibold text-cyan-400">Review</button></div></div>)}</div>}</section>
 

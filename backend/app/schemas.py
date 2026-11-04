@@ -136,6 +136,10 @@ class SubmissionRead(ORMModel):
     file_url: str
 
 
+class BatchUploadRead(BaseModel):
+    uploaded: list[SubmissionRead]
+
+
 class ExtractionUpdate(BaseModel):
     extracted_text: str = Field(min_length=2)
 
