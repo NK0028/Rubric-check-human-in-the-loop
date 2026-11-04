@@ -67,6 +67,22 @@ with tempfile.TemporaryDirectory() as temporary_directory:
             json={"title": "Design and Analysis of Algorithms", "code": "DAA-101"},
         )
         assert course.status_code == 201, course.text
+        updated_course = client.put(
+            f"/api/courses/{course.json()['id']}",
+            json={"title": "Design and Analysis of Algorithms II", "code": "DAA-102"},
+        )
+        assert updated_course.status_code == 200, updated_course.text
+        assert updated_course.json()["code"] == "DAA-102"
+        archived_course = client.patch(f"/api/courses/{course.json()['id']}/archive", json={"is_archived": True})
+        assert archived_course.status_code == 200, archived_course.text
+        assert client.get("/api/courses").json() == []
+        assert client.get("/api/courses?include_archived=true").json()[0]["is_archived"] is True
+        assert client.post(
+            f"/api/courses/{course.json()['id']}/students",
+            json={"name": "Blocked Student", "identifier": "FA21-BAI-000"},
+        ).status_code == 409
+        restored_course = client.patch(f"/api/courses/{course.json()['id']}/archive", json={"is_archived": False})
+        assert restored_course.status_code == 200, restored_course.text
 
         with TestClient(app) as other_teacher:
             other_registered = other_teacher.post(
@@ -96,6 +112,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
             json={"course_id": course.json()["id"], "title": "Midterm Examination"},
         )
         assert exam.status_code == 201, exam.text
+        updated_exam = client.put(
+            f"/api/exams/{exam.json()['id']}",
+            json={"title": "Midterm Examination Updated", "description": "Updated instructions"},
+        )
+        assert updated_exam.status_code == 200, updated_exam.text
+        assert updated_exam.json()["title"] == "Midterm Examination Updated"
+        archived_exam = client.patch(f"/api/exams/{exam.json()['id']}/archive", json={"is_archived": True})
+        assert archived_exam.status_code == 200, archived_exam.text
+        assert client.get(f"/api/courses/{course.json()['id']}/exams").json() == []
+        restored_exam = client.patch(f"/api/exams/{exam.json()['id']}/archive", json={"is_archived": False})
+        assert restored_exam.status_code == 200, restored_exam.text
 
         question = client.post(
             "/api/questions",

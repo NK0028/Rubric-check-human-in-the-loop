@@ -5,8 +5,8 @@ import Link from "next/link";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-type Course = { id: number; title: string; code: string };
-type Exam = { id: number; title: string; course_id: number };
+type Course = { id: number; title: string; code: string; is_archived: boolean };
+type Exam = { id: number; title: string; course_id: number; description: string | null; is_archived: boolean };
 type Criterion = { title: string; description: string; max_marks: number };
 
 const defaultRubric: Criterion[] = [
@@ -29,6 +29,7 @@ export default function SetupPage() {
   const [exams, setExams] = useState<Exam[]>([]);
   const [selectedCourse, setSelectedCourse] = useState("");
   const [selectedExam, setSelectedExam] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [rubric, setRubric] = useState<Criterion[]>(defaultRubric);
   const [questionMaxMarks, setQuestionMaxMarks] = useState(6);
   const [notice, setNotice] = useState("Create your first course to begin.");
@@ -36,17 +37,17 @@ export default function SetupPage() {
   const rubricTotal = useMemo(() => rubric.reduce((sum, item) => sum + Number(item.max_marks || 0), 0), [rubric]);
 
   useEffect(() => {
-    request<Course[]>("/api/courses")
+    request<Course[]>(`/api/courses?include_archived=${showArchived}`)
       .then((items) => { setCourses(items); setNotice(items.length ? "Choose an existing course or create a new one." : "Create your first course to begin."); })
       .catch((error) => setNotice(error instanceof Error ? error.message : "Unable to load courses."));
-  }, []);
+  }, [showArchived]);
 
   async function selectCourse(event: ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value;
     setSelectedCourse(value); setSelectedExam(""); setExams([]);
     if (!value) return;
     try {
-      const loaded = await request<Exam[]>(`/api/courses/${value}/exams`);
+      const loaded = await request<Exam[]>(`/api/courses/${value}/exams?include_archived=${showArchived}`);
       setExams(loaded);
       setNotice(loaded.length ? "Choose an existing exam or create a new one." : "No exams exist for this course yet. Create one to continue.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to load exams."); }
@@ -94,9 +95,45 @@ export default function SetupPage() {
     } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to save question."); } finally { setSaving(false); }
   }
 
+  async function updateCourse(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCourse) return;
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
+    try {
+      const updated = await request<Course>(`/api/courses/${selectedCourse}`, { method: "PUT", body: JSON.stringify({ title: form.get("title"), code: form.get("code") }) });
+      setCourses((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setNotice(`${updated.code} updated.`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to update course."); } finally { setSaving(false); }
+  }
+
+  async function updateExam(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedExam) return;
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
+    try {
+      const updated = await request<Exam>(`/api/exams/${selectedExam}`, { method: "PUT", body: JSON.stringify({ title: form.get("title"), description: form.get("description") || null }) });
+      setExams((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setNotice(`${updated.title} updated.`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to update exam."); } finally { setSaving(false); }
+  }
+
+  async function setArchive(kind: "courses" | "exams", id: string, isArchived: boolean) {
+    try {
+      const updated = await request<Course | Exam>(`/api/${kind}/${id}/archive`, { method: "PATCH", body: JSON.stringify({ is_archived: isArchived }) });
+      if (kind === "courses") { setCourses((items) => items.map((item) => item.id === updated.id ? updated as Course : item)); setSelectedCourse(""); setSelectedExam(""); setExams([]); }
+      else { setExams((items) => items.map((item) => item.id === updated.id ? updated as Exam : item)); setSelectedExam(""); }
+      setNotice(`${kind === "courses" ? "Course" : "Exam"} ${isArchived ? "archived" : "restored"}.`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to update archive status."); }
+  }
+
   function updateCriterion(index: number, key: keyof Criterion, value: string) {
     setRubric((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: key === "max_marks" ? Number(value) : value } : item));
   }
+
+  const course = courses.find((item) => item.id === Number(selectedCourse));
+  const exam = exams.find((item) => item.id === Number(selectedExam));
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
@@ -104,7 +141,7 @@ export default function SetupPage() {
         <Link href="/" className="text-sm font-semibold text-cyan-400">← RubriCheck AI</Link>
         <h1 className="mt-6 text-4xl font-bold">Set up an exam rubric</h1>
         <p className="mt-3 max-w-2xl text-slate-400">Each question gets its own teacher-defined criteria. AI will later score against these criteria and ask you to approve the result.</p>
-        <p className="mt-6 rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">{notice}</p>
+        <p className="mt-6 rounded-lg border border-cyan-400/25 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">{notice}</p><label className="mt-4 flex w-fit items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={showArchived} onChange={(event) => { setShowArchived(event.target.checked); setSelectedCourse(""); setSelectedExam(""); setExams([]); }} /> Show archived courses and exams</label>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-2">
           <form onSubmit={createCourse} className="rounded-xl border border-slate-800 bg-slate-900 p-6">
@@ -122,6 +159,8 @@ export default function SetupPage() {
             <button disabled={saving} className="button mt-5">Save exam</button>
           </form>
         </div>
+
+        {course && <section className="mt-6 grid gap-6 lg:grid-cols-2"><form key={course.id} onSubmit={updateCourse} className="rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Manage course</h2><input required name="title" defaultValue={course.title} className="field mt-5"/><input required name="code" defaultValue={course.code} className="field mt-3"/><div className="mt-5 flex gap-3"><button disabled={saving} className="button">Save changes</button><button type="button" onClick={() => setArchive("courses", selectedCourse, !course.is_archived)} className="rounded-lg border border-slate-700 px-4 py-3 font-semibold text-slate-200">{course.is_archived ? "Restore course" : "Archive course"}</button></div></form>{exam && <form key={exam.id} onSubmit={updateExam} className="rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Manage exam</h2><input required name="title" defaultValue={exam.title} className="field mt-5"/><input name="description" defaultValue={exam.description ?? ""} placeholder="Optional instructions" className="field mt-3"/><div className="mt-5 flex gap-3"><button disabled={saving} className="button">Save changes</button><button type="button" onClick={() => setArchive("exams", selectedExam, !exam.is_archived)} className="rounded-lg border border-slate-700 px-4 py-3 font-semibold text-slate-200">{exam.is_archived ? "Restore exam" : "Archive exam"}</button></div></form>}</section>}
 
         <form onSubmit={createQuestion} className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-6">
           <h2 className="text-xl font-semibold">3. Add question and marking rubric</h2>

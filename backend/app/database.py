@@ -30,6 +30,14 @@ def migrate_legacy_schema() -> None:
         if "owner_id" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE courses ADD COLUMN owner_id INTEGER"))
+        if "is_archived" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE courses ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT 0"))
+    if "exams" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("exams")}
+        if "is_archived" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE exams ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT 0"))
     if "evaluation_criteria" in inspector.get_table_names():
         columns = {column["name"] for column in inspector.get_columns("evaluation_criteria")}
         if "feedback_suggestion" not in columns:

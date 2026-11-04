@@ -31,10 +31,13 @@ from .ocr import OCRUnavailableError, extract_text
 from .schemas import (
     CourseCreate,
     CourseRead,
+    CourseUpdate,
+    ArchiveUpdate,
     EvaluationCriterionRead,
     EvaluationRead,
     ExamCreate,
     ExamRead,
+    ExamUpdate,
     ExamProgressRead,
     QuestionCreate,
     QuestionRead,
@@ -128,11 +131,26 @@ def owned_course(course_id: int, user: User, session: Session) -> Course:
     return course
 
 
+def active_course(course_id: int, user: User, session: Session) -> Course:
+    course = owned_course(course_id, user, session)
+    if course.is_archived:
+        raise HTTPException(status_code=409, detail="Restore this course before adding or changing working data.")
+    return course
+
+
 def owned_exam(exam_id: int, user: User, session: Session) -> Exam:
     exam = session.get(Exam, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found.")
     owned_course(exam.course_id, user, session)
+    return exam
+
+
+def active_exam(exam_id: int, user: User, session: Session) -> Exam:
+    exam = owned_exam(exam_id, user, session)
+    if exam.is_archived:
+        raise HTTPException(status_code=409, detail="Restore this exam before adding questions or answer sheets.")
+    active_course(exam.course_id, user, session)
     return exam
 
 
@@ -373,13 +391,39 @@ def create_course(payload: CourseCreate, session: Session = Depends(get_session)
 
 
 @router.get("/courses", response_model=list[CourseRead])
-def list_courses(session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Course]:
-    return list(session.scalars(select(Course).where(Course.owner_id == user.id).order_by(Course.created_at.desc())))
+def list_courses(include_archived: bool = False, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Course]:
+    statement = select(Course).where(Course.owner_id == user.id)
+    if not include_archived:
+        statement = statement.where(Course.is_archived.is_(False))
+    return list(session.scalars(statement.order_by(Course.is_archived, Course.created_at.desc())))
+
+
+@router.put("/courses/{course_id}", response_model=CourseRead)
+def update_course(course_id: int, payload: CourseUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Course:
+    course = owned_course(course_id, user, session)
+    course.title = payload.title.strip()
+    course.code = payload.code.strip().upper()
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="A course with this code already exists.") from error
+    session.refresh(course)
+    return course
+
+
+@router.patch("/courses/{course_id}/archive", response_model=CourseRead)
+def archive_course(course_id: int, payload: ArchiveUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Course:
+    course = owned_course(course_id, user, session)
+    course.is_archived = payload.is_archived
+    session.commit()
+    session.refresh(course)
+    return course
 
 
 @router.post("/courses/{course_id}/students", response_model=StudentRead, status_code=status.HTTP_201_CREATED, tags=["roster"])
 def create_student(course_id: int, payload: StudentCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Student:
-    owned_course(course_id, user, session)
+    active_course(course_id, user, session)
     student = Student(course_id=course_id, name=payload.name.strip(), identifier=payload.identifier.strip())
     session.add(student)
     try:
@@ -399,7 +443,7 @@ def list_students(course_id: int, session: Session = Depends(get_session), user:
 
 @router.put("/courses/{course_id}/students/{student_id}", response_model=StudentRead, tags=["roster"])
 def update_student(course_id: int, student_id: int, payload: StudentUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Student:
-    owned_course(course_id, user, session)
+    active_course(course_id, user, session)
     student = session.get(Student, student_id)
     if not student or student.course_id != course_id:
         raise HTTPException(status_code=404, detail="Student not found in this course roster.")
@@ -430,7 +474,7 @@ def update_student(course_id: int, student_id: int, payload: StudentUpdate, sess
 
 @router.delete("/courses/{course_id}/students/{student_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["roster"])
 def delete_student(course_id: int, student_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Response:
-    owned_course(course_id, user, session)
+    active_course(course_id, user, session)
     student = session.get(Student, student_id)
     if not student or student.course_id != course_id:
         raise HTTPException(status_code=404, detail="Student not found in this course roster.")
@@ -451,7 +495,7 @@ def delete_student(course_id: int, student_id: int, session: Session = Depends(g
 @router.post("/courses/{course_id}/students/import", response_model=RosterImportRead, tags=["roster"])
 async def import_students(course_id: int, file: UploadFile = File(...), session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> RosterImportRead:
     """Import or update a roster from UTF-8 CSV columns named `name` and `identifier`."""
-    owned_course(course_id, user, session)
+    active_course(course_id, user, session)
     if Path(file.filename or "").suffix.lower() != ".csv":
         raise HTTPException(status_code=415, detail="Upload a CSV file with name and identifier columns.")
     content = await file.read()
@@ -490,7 +534,7 @@ async def import_students(course_id: int, file: UploadFile = File(...), session:
 
 @router.post("/exams", response_model=ExamRead, status_code=status.HTTP_201_CREATED)
 def create_exam(payload: ExamCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Exam:
-    owned_course(payload.course_id, user, session)
+    active_course(payload.course_id, user, session)
     exam = Exam(**payload.model_dump())
     session.add(exam)
     session.commit()
@@ -499,14 +543,36 @@ def create_exam(payload: ExamCreate, session: Session = Depends(get_session), us
 
 
 @router.get("/courses/{course_id}/exams", response_model=list[ExamRead])
-def list_course_exams(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Exam]:
+def list_course_exams(course_id: int, include_archived: bool = False, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Exam]:
     owned_course(course_id, user, session)
-    return list(session.scalars(select(Exam).where(Exam.course_id == course_id).order_by(Exam.created_at.desc())))
+    statement = select(Exam).where(Exam.course_id == course_id)
+    if not include_archived:
+        statement = statement.where(Exam.is_archived.is_(False))
+    return list(session.scalars(statement.order_by(Exam.is_archived, Exam.created_at.desc())))
+
+
+@router.put("/exams/{exam_id}", response_model=ExamRead)
+def update_exam(exam_id: int, payload: ExamUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Exam:
+    exam = owned_exam(exam_id, user, session)
+    exam.title = payload.title.strip()
+    exam.description = payload.description.strip() if payload.description else None
+    session.commit()
+    session.refresh(exam)
+    return exam
+
+
+@router.patch("/exams/{exam_id}/archive", response_model=ExamRead)
+def archive_exam(exam_id: int, payload: ArchiveUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Exam:
+    exam = owned_exam(exam_id, user, session)
+    exam.is_archived = payload.is_archived
+    session.commit()
+    session.refresh(exam)
+    return exam
 
 
 @router.post("/questions", response_model=QuestionRead, status_code=status.HTTP_201_CREATED)
 def create_question(payload: QuestionCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> QuestionRead:
-    owned_exam(payload.exam_id, user, session)
+    active_exam(payload.exam_id, user, session)
     rubric_total = sum(item.max_marks for item in payload.rubric)
     if abs(rubric_total - payload.max_marks) > 0.001:
         raise HTTPException(status_code=422, detail="Rubric criterion marks must equal the question's maximum marks.")
@@ -625,7 +691,8 @@ async def upload_submission(
     user: User = Depends(get_current_user),
 ) -> SubmissionRead:
     """Store a scanned answer and immediately attempt local, on-device OCR."""
-    owned_question(question_id, user, session)
+    question = owned_question(question_id, user, session)
+    active_exam(question.exam_id, user, session)
     original_filename = file.filename or "answer-sheet"
     suffix = Path(original_filename).suffix.lower()
     if suffix not in allowed_upload_suffixes:

@@ -34,10 +34,19 @@ class CourseCreate(BaseModel):
     code: str = Field(min_length=2, max_length=40)
 
 
+class CourseUpdate(CourseCreate):
+    pass
+
+
+class ArchiveUpdate(BaseModel):
+    is_archived: bool
+
+
 class CourseRead(ORMModel):
     id: int
     title: str
     code: str
+    is_archived: bool
 
 
 class StudentCreate(BaseModel):
@@ -68,11 +77,17 @@ class ExamCreate(BaseModel):
     description: str | None = None
 
 
+class ExamUpdate(BaseModel):
+    title: str = Field(min_length=2, max_length=160)
+    description: str | None = None
+
+
 class ExamRead(ORMModel):
     id: int
     course_id: int
     title: str
     description: str | None
+    is_archived: bool
 
 
 class RubricCriterionCreate(BaseModel):
