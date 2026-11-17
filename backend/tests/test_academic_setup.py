@@ -253,6 +253,31 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         assert report.json()["student_identifier"] == "FA21-BAI-042"
         assert report.json()["results"][0]["teacher_feedback"] == "Approved after reviewing the scan."
 
+        template = client.post("/api/rubric-templates", json={"name": "Proof rubric", "rubric": question.json()["rubric"]})
+        assert template.status_code == 201, template.text
+        assert client.get("/api/rubric-templates").json()[0]["name"] == "Proof rubric"
+        bank_item = client.post("/api/question-bank", json={"title": "Greedy property", "prompt": question.json()["prompt"], "max_marks": 6, "rubric": question.json()["rubric"]})
+        assert bank_item.status_code == 201, bank_item.text
+        assert client.get("/api/question-bank").json()[0]["title"] == "Greedy property"
+
+        manual_batch = client.post(
+            "/api/submissions/batch",
+            data={"question_id": question.json()["id"], "student_ids": str(ayesha["student_id"])},
+            files=[("files", ("unlabeled-scan.png", b"manual-match-scan", "image/png"))],
+        )
+        assert manual_batch.status_code == 201, manual_batch.text
+        assert manual_batch.json()["uploaded"][0]["student_identifier"] == "FA21-BAI-042"
+
+        portal_code = client.get(f"/api/courses/{course.json()['id']}/portal-code")
+        assert portal_code.status_code == 200, portal_code.text
+        portal = client.post("/api/student-portal/results", json={"course_code": "DAA-102", "portal_code": portal_code.json()["portal_code"], "student_identifier": "FA21-BAI-042"})
+        assert portal.status_code == 200, portal.text
+        assert portal.json()["reports"][0]["student_name"] == "Ayesha Khan Updated"
+
+        analytics = client.get(f"/api/courses/{course.json()['id']}/analytics")
+        assert analytics.status_code == 200, analytics.text
+        assert analytics.json()["exams"][0]["students_with_final_marks"] == 1
+
         csv_export = client.get(f"/api/exams/{exam.json()['id']}/results.csv")
         assert csv_export.status_code == 200, csv_export.text
         assert csv_export.headers["content-type"].startswith("text/csv")
@@ -264,7 +289,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
         progress = client.get(f"/api/exams/{exam.json()['id']}/progress")
         assert progress.status_code == 200, progress.text
-        assert progress.json()["uploaded_count"] == 3
+        assert progress.json()["uploaded_count"] == 4
         assert progress.json()["finalized_count"] == 1
         assert progress.json()["questions"][0]["finalized_count"] == 1
 
