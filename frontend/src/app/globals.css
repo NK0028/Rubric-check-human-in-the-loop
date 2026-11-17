@@ -3,6 +3,9 @@
 :root {
   --background: #020617;
   --foreground: #f8fafc;
+  --surface: #0f172a;
+  --border: #263750;
+  --accent: #22d3ee;
 }
 
 @theme inline {
@@ -13,24 +16,26 @@
 }
 
 body {
-  background: var(--background);
+  background: radial-gradient(circle at 15% -10%, #164e633d, transparent 32rem), radial-gradient(circle at 85% 0%, #1e3a8a38, transparent 34rem), var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
 
 .field {
   width: 100%;
-  border: 1px solid #334155;
-  border-radius: 0.5rem;
-  background: #020617;
-  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: #020617b3;
+  padding: 0.8rem 0.9rem;
   color: #f8fafc;
 }
 
 .field::placeholder { color: #64748b; }
-.field:focus { outline: 2px solid #22d3ee; outline-offset: 1px; }
-.button { border-radius: 0.5rem; background: #22d3ee; padding: 0.75rem 1rem; font-weight: 700; color: #082f49; }
+.field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px #22d3ee24; }
+.button { border-radius: 0.65rem; background: linear-gradient(135deg, #67e8f9, #22d3ee); padding: 0.8rem 1.1rem; font-weight: 700; color: #082f49; box-shadow: 0 8px 24px #0891b233; transition: transform .2s ease, box-shadow .2s ease; }
+.button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 28px #0891b244; }
 .button:disabled { cursor: not-allowed; opacity: 0.55; }
+.glass-card { border: 1px solid var(--border); border-radius: 1rem; background: linear-gradient(145deg, #0f172af0, #0b1224e8); box-shadow: 0 18px 50px #0000002e; }
 
 @media print {
   @page { margin: 18mm; }
