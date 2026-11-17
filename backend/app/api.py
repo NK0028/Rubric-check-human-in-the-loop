@@ -37,6 +37,7 @@ from .ocr import OCRUnavailableError, extract_text
 from .schemas import (
     CourseCreate,
     CourseRead,
+    CoursePortalRead,
     CourseUpdate,
     ArchiveUpdate,
     CollaboratorCreate,
@@ -62,6 +63,8 @@ from .schemas import (
     ExamResultRow,
     StudentGradebookRow,
     StudentReportRead,
+    StudentPortalRead,
+    StudentPortalRequest,
     SubmissionRead,
     BatchUploadRead,
     StudentCreate,
@@ -81,6 +84,7 @@ from .storage import uploads_directory
 
 auth_router = APIRouter(prefix="/api/auth", tags=["authentication"])
 router = APIRouter(prefix="/api", tags=["academic setup"], dependencies=[Depends(get_current_user)])
+student_portal_router = APIRouter(prefix="/api/student-portal", tags=["student portal"])
 allowed_upload_suffixes = {".jpg", ".jpeg", ".png", ".webp", ".pdf"}
 maximum_upload_size = 10 * 1024 * 1024
 
@@ -492,6 +496,12 @@ def list_collaborators(course_id: int, session: Session = Depends(get_session), 
     return [CollaboratorRead(user_id=item_user.id, name=item_user.name, email=item_user.email, role=collaborator.role) for collaborator, item_user in collaborators]
 
 
+@router.get("/courses/{course_id}/portal-code", response_model=CoursePortalRead, tags=["student portal"])
+def get_course_portal_code(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> CoursePortalRead:
+    course = owner_course(course_id, user, session)
+    return CoursePortalRead(course_id=course.id, portal_code=course.portal_code)
+
+
 @router.post("/courses/{course_id}/collaborators", response_model=CollaboratorRead, status_code=status.HTTP_201_CREATED, tags=["collaboration"])
 def add_collaborator(course_id: int, payload: CollaboratorCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> CollaboratorRead:
     course = owner_course(course_id, user, session)
@@ -822,6 +832,24 @@ def get_student_report(exam_id: int, student_id: int, session: Session = Depends
         total_questions=gradebook_row.total_questions,
         results=results,
     )
+
+
+@student_portal_router.post("/results", response_model=StudentPortalRead)
+def get_student_portal_results(payload: StudentPortalRequest, session: Session = Depends(get_session)) -> StudentPortalRead:
+    course = session.scalar(select(Course).where(Course.code == payload.course_code.strip().upper(), Course.portal_code == payload.portal_code.strip()))
+    if not course:
+        raise HTTPException(status_code=401, detail="The course code or portal access code is incorrect.")
+    student = session.scalar(select(Student).where(Student.course_id == course.id, Student.identifier == payload.student_identifier.strip()))
+    if not student:
+        raise HTTPException(status_code=404, detail="No student with that ID was found in this course.")
+    reports: list[StudentReportRead] = []
+    exams = session.scalars(select(Exam).where(Exam.course_id == course.id, Exam.is_archived.is_(False)).order_by(Exam.created_at.desc())).all()
+    for exam in exams:
+        gradebook_row = next(item for item in exam_gradebook(exam, session) if item.student_id == student.id)
+        results = [item for item in exam_results(exam.id, session) if item.student_identifier == student.identifier]
+        if results:
+            reports.append(StudentReportRead(exam_id=exam.id, exam_title=exam.title, student_id=student.id, student_name=student.name, student_identifier=student.identifier, awarded_total=gradebook_row.awarded_total, maximum_marks=gradebook_row.maximum_marks, finalized_questions=gradebook_row.finalized_questions, total_questions=gradebook_row.total_questions, results=results))
+    return StudentPortalRead(course_title=course.title, student_name=student.name, student_identifier=student.identifier, reports=reports)
 
 
 @router.get("/exams/{exam_id}/results.csv", tags=["results"])

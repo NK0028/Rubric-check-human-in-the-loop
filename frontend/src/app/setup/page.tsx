@@ -38,6 +38,7 @@ export default function SetupPage() {
   const [questionBank, setQuestionBank] = useState<QuestionBankItem[]>([]);
   const [questionPrompt, setQuestionPrompt] = useState("");
   const [referenceAnswer, setReferenceAnswer] = useState("");
+  const [portalCode, setPortalCode] = useState("");
   const [notice, setNotice] = useState("Create your first course to begin.");
   const [saving, setSaving] = useState(false);
   const rubricTotal = useMemo(() => rubric.reduce((sum, item) => sum + Number(item.max_marks || 0), 0), [rubric]);
@@ -51,11 +52,12 @@ export default function SetupPage() {
 
   async function selectCourse(event: ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value;
-    setSelectedCourse(value); setSelectedExam(""); setExams([]);
+    setSelectedCourse(value); setSelectedExam(""); setExams([]); setPortalCode("");
     if (!value) return;
     try {
-      const loaded = await request<Exam[]>(`/api/courses/${value}/exams?include_archived=${showArchived}`);
+      const [loaded, portal] = await Promise.all([request<Exam[]>(`/api/courses/${value}/exams?include_archived=${showArchived}`), request<{ portal_code: string }>(`/api/courses/${value}/portal-code`).catch(() => null)]);
       setExams(loaded);
+      setPortalCode(portal?.portal_code ?? "");
       setNotice(loaded.length ? "Choose an existing exam or create a new one." : "No exams exist for this course yet. Create one to continue.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to load exams."); }
   }
@@ -172,7 +174,7 @@ export default function SetupPage() {
           </form>
         </div>
 
-        {course && <section className="mt-6 grid gap-6 lg:grid-cols-2"><form key={course.id} onSubmit={updateCourse} className="rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Manage course</h2><input required name="title" defaultValue={course.title} className="field mt-5"/><input required name="code" defaultValue={course.code} className="field mt-3"/><div className="mt-5 flex gap-3"><button disabled={saving} className="button">Save changes</button><button type="button" onClick={() => setArchive("courses", selectedCourse, !course.is_archived)} className="rounded-lg border border-slate-700 px-4 py-3 font-semibold text-slate-200">{course.is_archived ? "Restore course" : "Archive course"}</button></div></form>{exam && <form key={exam.id} onSubmit={updateExam} className="rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Manage exam</h2><input required name="title" defaultValue={exam.title} className="field mt-5"/><input name="description" defaultValue={exam.description ?? ""} placeholder="Optional instructions" className="field mt-3"/><div className="mt-5 flex gap-3"><button disabled={saving} className="button">Save changes</button><button type="button" onClick={() => setArchive("exams", selectedExam, !exam.is_archived)} className="rounded-lg border border-slate-700 px-4 py-3 font-semibold text-slate-200">{exam.is_archived ? "Restore exam" : "Archive exam"}</button></div></form>}</section>}
+        {course && <section className="mt-6 grid gap-6 lg:grid-cols-2"><form key={course.id} onSubmit={updateCourse} className="rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Manage course</h2><input required name="title" defaultValue={course.title} className="field mt-5"/><input required name="code" defaultValue={course.code} className="field mt-3"/>{portalCode && <p className="mt-3 text-sm text-cyan-200">Student portal access code: <code className="font-bold">{portalCode}</code></p>}<div className="mt-5 flex gap-3"><button disabled={saving} className="button">Save changes</button><button type="button" onClick={() => setArchive("courses", selectedCourse, !course.is_archived)} className="rounded-lg border border-slate-700 px-4 py-3 font-semibold text-slate-200">{course.is_archived ? "Restore course" : "Archive course"}</button></div></form>{exam && <form key={exam.id} onSubmit={updateExam} className="rounded-xl border border-slate-800 bg-slate-900 p-6"><h2 className="text-xl font-semibold">Manage exam</h2><input required name="title" defaultValue={exam.title} className="field mt-5"/><input name="description" defaultValue={exam.description ?? ""} placeholder="Optional instructions" className="field mt-3"/><div className="mt-5 flex gap-3"><button disabled={saving} className="button">Save changes</button><button type="button" onClick={() => setArchive("exams", selectedExam, !exam.is_archived)} className="rounded-lg border border-slate-700 px-4 py-3 font-semibold text-slate-200">{exam.is_archived ? "Restore exam" : "Archive exam"}</button></div></form>}</section>}
 
         <form onSubmit={createQuestion} className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-6">
           <h2 className="text-xl font-semibold">3. Add question and marking rubric</h2>

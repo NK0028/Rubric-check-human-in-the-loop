@@ -1,4 +1,5 @@
 from datetime import datetime
+from secrets import token_urlsafe
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -14,6 +15,7 @@ class Course(Base):
     title: Mapped[str] = mapped_column(String(160))
     code: Mapped[str] = mapped_column(String(40), unique=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    portal_code: Mapped[str] = mapped_column(String(32), default=lambda: token_urlsafe(8), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

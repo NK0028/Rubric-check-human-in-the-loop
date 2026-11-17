@@ -49,6 +49,11 @@ class CourseRead(ORMModel):
     is_archived: bool
 
 
+class CoursePortalRead(BaseModel):
+    course_id: int
+    portal_code: str
+
+
 class StudentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     identifier: str = Field(min_length=2, max_length=80)
@@ -281,6 +286,19 @@ class StudentReportRead(BaseModel):
     finalized_questions: int
     total_questions: int
     results: list[ExamResultRow]
+
+
+class StudentPortalRequest(BaseModel):
+    course_code: str = Field(min_length=2, max_length=40)
+    portal_code: str = Field(min_length=4, max_length=32)
+    student_identifier: str = Field(min_length=2, max_length=80)
+
+
+class StudentPortalRead(BaseModel):
+    course_title: str
+    student_name: str
+    student_identifier: str
+    reports: list[StudentReportRead]
 
 
 class QuestionProgressRead(BaseModel):

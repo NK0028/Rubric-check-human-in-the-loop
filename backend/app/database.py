@@ -33,6 +33,10 @@ def migrate_legacy_schema() -> None:
         if "is_archived" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE courses ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT 0"))
+        if "portal_code" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE courses ADD COLUMN portal_code TEXT"))
+                connection.execute(text("UPDATE courses SET portal_code = lower(hex(randomblob(8))) WHERE portal_code IS NULL"))
     if "exams" in inspector.get_table_names():
         columns = {column["name"] for column in inspector.get_columns("exams")}
         if "is_archived" not in columns:
