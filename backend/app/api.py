@@ -1,5 +1,6 @@
 from pathlib import Path
 from secrets import token_urlsafe
+from hashlib import sha256
 import csv
 from io import StringIO
 import re
@@ -84,6 +85,7 @@ from .schemas import (
     PasswordChangeRequest,
     RegisterRequest,
     UserRead,
+    SessionRead,
 )
 from .storage import uploads_directory
 
@@ -119,6 +121,26 @@ def login(payload: LoginRequest, response: Response, session: Session = Depends(
 @auth_router.get("/me", response_model=UserRead)
 def current_user(user: User = Depends(get_current_user)) -> User:
     return user
+
+
+@auth_router.get("/sessions", response_model=list[SessionRead])
+def list_sessions(
+    session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[SessionRead]:
+    current_hash = sha256(session_token.encode()).hexdigest() if session_token else ""
+    records = session.scalars(select(AuthSession).where(AuthSession.user_id == user.id).order_by(AuthSession.created_at.desc())).all()
+    return [SessionRead(id=record.id, created_at=record.created_at, expires_at=record.expires_at, is_current=record.token_hash == current_hash) for record in records]
+
+
+@auth_router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_other_session(session_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> None:
+    record = session.get(AuthSession, session_id)
+    if not record or record.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    session.delete(record)
+    session.commit()
 
 
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

@@ -29,6 +29,13 @@ class UserRead(ORMModel):
     email: str
 
 
+class SessionRead(BaseModel):
+    id: int
+    created_at: datetime
+    expires_at: datetime
+    is_current: bool
+
+
 class CourseCreate(BaseModel):
     title: str = Field(min_length=2, max_length=160)
     code: str = Field(min_length=2, max_length=40)
