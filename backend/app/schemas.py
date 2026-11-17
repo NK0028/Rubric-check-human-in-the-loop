@@ -54,6 +54,14 @@ class CoursePortalRead(BaseModel):
     portal_code: str
 
 
+class AuditEventRead(BaseModel):
+    id: int
+    actor_name: str
+    action: str
+    details: str
+    created_at: datetime
+
+
 class StudentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     identifier: str = Field(min_length=2, max_length=80)

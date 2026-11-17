@@ -15,6 +15,7 @@ from .database import get_session
 from .auth import SESSION_COOKIE, get_current_user, hash_password, issue_session, revoke_session, verify_password
 from .models import (
     AuthSession,
+    AuditEvent,
     ClassSection,
     Course,
     CourseCollaborator,
@@ -41,6 +42,7 @@ from .schemas import (
     CourseAnalyticsRead,
     CourseUpdate,
     ArchiveUpdate,
+    AuditEventRead,
     CollaboratorCreate,
     CollaboratorRead,
     EvaluationCriterionRead,
@@ -183,6 +185,10 @@ def active_course(course_id: int, user: User, session: Session) -> Course:
     if course.is_archived:
         raise HTTPException(status_code=409, detail="Restore this course before adding or changing working data.")
     return course
+
+
+def record_audit(session: Session, course_id: int, user: User, action: str, details: str = "") -> None:
+    session.add(AuditEvent(course_id=course_id, actor_id=user.id, action=action, details=details))
 
 
 def owned_exam(exam_id: int, user: User, session: Session) -> Exam:
@@ -504,6 +510,13 @@ def get_course_portal_code(course_id: int, session: Session = Depends(get_sessio
     return CoursePortalRead(course_id=course.id, portal_code=course.portal_code)
 
 
+@router.get("/courses/{course_id}/activity", response_model=list[AuditEventRead], tags=["audit"])
+def get_course_activity(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[AuditEventRead]:
+    owned_course(course_id, user, session)
+    events = session.execute(select(AuditEvent, User).join(User, User.id == AuditEvent.actor_id).where(AuditEvent.course_id == course_id).order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(100)).all()
+    return [AuditEventRead(id=event.id, actor_name=actor.name, action=event.action, details=event.details, created_at=event.created_at) for event, actor in events]
+
+
 @router.post("/courses/{course_id}/collaborators", response_model=CollaboratorRead, status_code=status.HTTP_201_CREATED, tags=["collaboration"])
 def add_collaborator(course_id: int, payload: CollaboratorCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> CollaboratorRead:
     course = owner_course(course_id, user, session)
@@ -518,6 +531,7 @@ def add_collaborator(course_id: int, payload: CollaboratorCreate, session: Sessi
     else:
         collaborator = CourseCollaborator(course_id=course_id, user_id=collaborator_user.id, role=payload.role)
         session.add(collaborator)
+    record_audit(session, course_id, user, "updated course access", f"{collaborator_user.email} is now a {payload.role}.")
     session.commit()
     return CollaboratorRead(user_id=collaborator_user.id, name=collaborator_user.name, email=collaborator_user.email, role=collaborator.role)
 
@@ -529,6 +543,7 @@ def remove_collaborator(course_id: int, collaborator_user_id: int, session: Sess
     if not collaborator:
         raise HTTPException(status_code=404, detail="Collaborator not found.")
     session.delete(collaborator)
+    record_audit(session, course_id, user, "removed course access", f"Removed teacher user #{collaborator_user_id}.")
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -573,6 +588,7 @@ def create_student(course_id: int, payload: StudentCreate, session: Session = De
         raise HTTPException(status_code=422, detail="Section not found in this course.")
     student = Student(course_id=course_id, section_id=payload.section_id, name=payload.name.strip(), identifier=payload.identifier.strip())
     session.add(student)
+    record_audit(session, course_id, user, "added roster student", f"{student.name} ({student.identifier}).")
     try:
         session.commit()
     except IntegrityError as error:
@@ -1211,6 +1227,11 @@ def finalize_evaluation(
     submission = session.get(Submission, evaluation.submission_id)
     assert submission is not None
     submission.status = "finalized"
+    question = session.get(Question, submission.question_id)
+    assert question is not None
+    exam = session.get(Exam, question.exam_id)
+    assert exam is not None
+    record_audit(session, exam.course_id, user, "finalized marks", f"Recorded {awarded_total} / {evaluation.maximum_marks} for {submission.student_name}.")
     session.commit()
     session.refresh(final_evaluation)
     return final_evaluation_response(final_evaluation, session)

@@ -21,6 +21,7 @@ export default function Home() {
               <Link href="/portal" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Student portal</Link>
               <Link href="/dashboard" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Review dashboard</Link>
               <Link href="/analytics" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Course analytics</Link>
+              <Link href="/activity" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Course activity</Link>
               <Link href="/roster" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Student roster</Link>
               <Link href="/collaboration" className="rounded-lg border border-slate-700 px-5 py-3 font-semibold text-slate-200">Share a course</Link>
             </div>
