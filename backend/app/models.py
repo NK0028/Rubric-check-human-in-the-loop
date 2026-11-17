@@ -17,6 +17,17 @@ class Course(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class CourseCollaborator(Base):
+    __tablename__ = "course_collaborators"
+    __table_args__ = (UniqueConstraint("course_id", "user_id", name="uq_course_collaborator"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="editor")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -54,8 +65,19 @@ class Student(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), index=True)
+    section_id: Mapped[int | None] = mapped_column(ForeignKey("class_sections.id"), index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(160))
     identifier: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ClassSection(Base):
+    __tablename__ = "class_sections"
+    __table_args__ = (UniqueConstraint("course_id", "name", name="uq_course_section_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("courses.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

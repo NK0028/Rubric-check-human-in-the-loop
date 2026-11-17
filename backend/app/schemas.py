@@ -52,6 +52,7 @@ class CourseRead(ORMModel):
 class StudentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     identifier: str = Field(min_length=2, max_length=80)
+    section_id: int | None = None
 
 
 class StudentUpdate(StudentCreate):
@@ -63,6 +64,29 @@ class StudentRead(ORMModel):
     course_id: int
     name: str
     identifier: str
+    section_id: int | None
+
+
+class SectionCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class SectionRead(ORMModel):
+    id: int
+    course_id: int
+    name: str
+
+
+class CollaboratorCreate(BaseModel):
+    email: str = Field(min_length=5, max_length=255)
+    role: str = Field(pattern="^(editor|viewer)$")
+
+
+class CollaboratorRead(BaseModel):
+    user_id: int
+    name: str
+    email: str
+    role: str
 
 
 class RosterImportRead(BaseModel):

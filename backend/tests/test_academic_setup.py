@@ -91,9 +91,19 @@ with tempfile.TemporaryDirectory() as temporary_directory:
             )
             assert other_registered.status_code == 201, other_registered.text
             assert other_teacher.get(f"/api/courses/{course.json()['id']}/students").status_code == 404
+            shared_course = client.post(
+                f"/api/courses/{course.json()['id']}/collaborators",
+                json={"email": "other@example.com", "role": "editor"},
+            )
+            assert shared_course.status_code == 201, shared_course.text
+            assert other_teacher.get("/api/courses").json()[0]["id"] == course.json()["id"]
+            section = other_teacher.post(f"/api/courses/{course.json()['id']}/sections", json={"name": "Section A"})
+            assert section.status_code == 201, section.text
+            assert client.get(f"/api/courses/{course.json()['id']}/sections").json()[0]["name"] == "Section A"
 
-        rostered_student = client.post(f"/api/courses/{course.json()['id']}/students", json={"name": "Ayesha Khan", "identifier": "FA21-BAI-042"})
+        rostered_student = client.post(f"/api/courses/{course.json()['id']}/students", json={"name": "Ayesha Khan", "identifier": "FA21-BAI-042", "section_id": section.json()["id"]})
         assert rostered_student.status_code == 201, rostered_student.text
+        assert rostered_student.json()["section_id"] == section.json()["id"]
         missing_student = client.post(f"/api/courses/{course.json()['id']}/students", json={"name": "Bilal Ahmed", "identifier": "FA21-BAI-043"})
         assert missing_student.status_code == 201, missing_student.text
         imported_roster = client.post(

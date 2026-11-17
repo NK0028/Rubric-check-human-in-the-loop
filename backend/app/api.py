@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Cookie, Depends, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -15,7 +15,9 @@ from .database import get_session
 from .auth import SESSION_COOKIE, get_current_user, hash_password, issue_session, revoke_session, verify_password
 from .models import (
     AuthSession,
+    ClassSection,
     Course,
+    CourseCollaborator,
     Evaluation,
     EvaluationCriterion,
     Exam,
@@ -33,6 +35,8 @@ from .schemas import (
     CourseRead,
     CourseUpdate,
     ArchiveUpdate,
+    CollaboratorCreate,
+    CollaboratorRead,
     EvaluationCriterionRead,
     EvaluationRead,
     ExamCreate,
@@ -53,6 +57,8 @@ from .schemas import (
     SubmissionRead,
     BatchUploadRead,
     StudentCreate,
+    SectionCreate,
+    SectionRead,
     StudentExamProgressRead,
     StudentRead,
     StudentUpdate,
@@ -125,15 +131,41 @@ def change_password(
     return user
 
 
-def owned_course(course_id: int, user: User, session: Session) -> Course:
+def course_role(course_id: int, user: User, session: Session) -> str:
     course = session.get(Course, course_id)
-    if not course or course.owner_id != user.id:
+    if not course:
         raise HTTPException(status_code=404, detail="Course not found.")
+    if course.owner_id == user.id:
+        return "owner"
+    collaborator = session.scalar(select(CourseCollaborator).where(CourseCollaborator.course_id == course_id, CourseCollaborator.user_id == user.id))
+    if not collaborator:
+        raise HTTPException(status_code=404, detail="Course not found.")
+    return collaborator.role
+
+
+def owned_course(course_id: int, user: User, session: Session) -> Course:
+    course_role(course_id, user, session)
+    course = session.get(Course, course_id)
+    assert course is not None
+    return course
+
+
+def owner_course(course_id: int, user: User, session: Session) -> Course:
+    course = owned_course(course_id, user, session)
+    if course.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the course owner can manage collaborators or archive the course.")
+    return course
+
+
+def editable_course(course_id: int, user: User, session: Session) -> Course:
+    course = owned_course(course_id, user, session)
+    if course_role(course_id, user, session) == "viewer":
+        raise HTTPException(status_code=403, detail="This shared course is view-only.")
     return course
 
 
 def active_course(course_id: int, user: User, session: Session) -> Course:
-    course = owned_course(course_id, user, session)
+    course = editable_course(course_id, user, session)
     if course.is_archived:
         raise HTTPException(status_code=409, detail="Restore this course before adding or changing working data.")
     return course
@@ -168,6 +200,16 @@ def owned_submission(submission_id: int, user: User, session: Session) -> Submis
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found.")
     owned_question(submission.question_id, user, session)
+    return submission
+
+
+def editable_submission(submission_id: int, user: User, session: Session) -> Submission:
+    submission = owned_submission(submission_id, user, session)
+    question = session.get(Question, submission.question_id)
+    assert question is not None
+    exam = session.get(Exam, question.exam_id)
+    assert exam is not None
+    editable_course(exam.course_id, user, session)
     return submission
 
 
@@ -393,7 +435,7 @@ def create_course(payload: CourseCreate, session: Session = Depends(get_session)
 
 @router.get("/courses", response_model=list[CourseRead])
 def list_courses(include_archived: bool = False, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Course]:
-    statement = select(Course).where(Course.owner_id == user.id)
+    statement = select(Course).outerjoin(CourseCollaborator).where(or_(Course.owner_id == user.id, CourseCollaborator.user_id == user.id)).distinct()
     if not include_archived:
         statement = statement.where(Course.is_archived.is_(False))
     return list(session.scalars(statement.order_by(Course.is_archived, Course.created_at.desc())))
@@ -401,7 +443,7 @@ def list_courses(include_archived: bool = False, session: Session = Depends(get_
 
 @router.put("/courses/{course_id}", response_model=CourseRead)
 def update_course(course_id: int, payload: CourseUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Course:
-    course = owned_course(course_id, user, session)
+    course = owner_course(course_id, user, session)
     course.title = payload.title.strip()
     course.code = payload.code.strip().upper()
     try:
@@ -415,17 +457,75 @@ def update_course(course_id: int, payload: CourseUpdate, session: Session = Depe
 
 @router.patch("/courses/{course_id}/archive", response_model=CourseRead)
 def archive_course(course_id: int, payload: ArchiveUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Course:
-    course = owned_course(course_id, user, session)
+    course = owner_course(course_id, user, session)
     course.is_archived = payload.is_archived
     session.commit()
     session.refresh(course)
     return course
 
 
+@router.get("/courses/{course_id}/collaborators", response_model=list[CollaboratorRead], tags=["collaboration"])
+def list_collaborators(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[CollaboratorRead]:
+    owner_course(course_id, user, session)
+    collaborators = session.execute(select(CourseCollaborator, User).join(User, User.id == CourseCollaborator.user_id).where(CourseCollaborator.course_id == course_id).order_by(User.name)).all()
+    return [CollaboratorRead(user_id=item_user.id, name=item_user.name, email=item_user.email, role=collaborator.role) for collaborator, item_user in collaborators]
+
+
+@router.post("/courses/{course_id}/collaborators", response_model=CollaboratorRead, status_code=status.HTTP_201_CREATED, tags=["collaboration"])
+def add_collaborator(course_id: int, payload: CollaboratorCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> CollaboratorRead:
+    course = owner_course(course_id, user, session)
+    collaborator_user = session.scalar(select(User).where(User.email == payload.email.strip().lower()))
+    if not collaborator_user:
+        raise HTTPException(status_code=404, detail="The teacher must create a RubriCheck account before being added.")
+    if collaborator_user.id == course.owner_id:
+        raise HTTPException(status_code=422, detail="The course owner already has full access.")
+    collaborator = session.scalar(select(CourseCollaborator).where(CourseCollaborator.course_id == course_id, CourseCollaborator.user_id == collaborator_user.id))
+    if collaborator:
+        collaborator.role = payload.role
+    else:
+        collaborator = CourseCollaborator(course_id=course_id, user_id=collaborator_user.id, role=payload.role)
+        session.add(collaborator)
+    session.commit()
+    return CollaboratorRead(user_id=collaborator_user.id, name=collaborator_user.name, email=collaborator_user.email, role=collaborator.role)
+
+
+@router.delete("/courses/{course_id}/collaborators/{collaborator_user_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["collaboration"])
+def remove_collaborator(course_id: int, collaborator_user_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Response:
+    owner_course(course_id, user, session)
+    collaborator = session.scalar(select(CourseCollaborator).where(CourseCollaborator.course_id == course_id, CourseCollaborator.user_id == collaborator_user_id))
+    if not collaborator:
+        raise HTTPException(status_code=404, detail="Collaborator not found.")
+    session.delete(collaborator)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/courses/{course_id}/sections", response_model=list[SectionRead], tags=["sections"])
+def list_sections(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[ClassSection]:
+    owned_course(course_id, user, session)
+    return list(session.scalars(select(ClassSection).where(ClassSection.course_id == course_id).order_by(ClassSection.name)))
+
+
+@router.post("/courses/{course_id}/sections", response_model=SectionRead, status_code=status.HTTP_201_CREATED, tags=["sections"])
+def create_section(course_id: int, payload: SectionCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> ClassSection:
+    active_course(course_id, user, session)
+    section = ClassSection(course_id=course_id, name=payload.name.strip())
+    session.add(section)
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="A section with this name already exists in the course.") from error
+    session.refresh(section)
+    return section
+
+
 @router.post("/courses/{course_id}/students", response_model=StudentRead, status_code=status.HTTP_201_CREATED, tags=["roster"])
 def create_student(course_id: int, payload: StudentCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Student:
     active_course(course_id, user, session)
-    student = Student(course_id=course_id, name=payload.name.strip(), identifier=payload.identifier.strip())
+    if payload.section_id and not session.scalar(select(ClassSection).where(ClassSection.id == payload.section_id, ClassSection.course_id == course_id)):
+        raise HTTPException(status_code=422, detail="Section not found in this course.")
+    student = Student(course_id=course_id, section_id=payload.section_id, name=payload.name.strip(), identifier=payload.identifier.strip())
     session.add(student)
     try:
         session.commit()
@@ -437,9 +537,12 @@ def create_student(course_id: int, payload: StudentCreate, session: Session = De
 
 
 @router.get("/courses/{course_id}/students", response_model=list[StudentRead], tags=["roster"])
-def list_students(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Student]:
+def list_students(course_id: int, section_id: int | None = None, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[Student]:
     owned_course(course_id, user, session)
-    return list(session.scalars(select(Student).where(Student.course_id == course_id).order_by(Student.name)))
+    statement = select(Student).where(Student.course_id == course_id)
+    if section_id:
+        statement = statement.where(Student.section_id == section_id)
+    return list(session.scalars(statement.order_by(Student.name)))
 
 
 @router.put("/courses/{course_id}/students/{student_id}", response_model=StudentRead, tags=["roster"])
@@ -448,6 +551,10 @@ def update_student(course_id: int, student_id: int, payload: StudentUpdate, sess
     student = session.get(Student, student_id)
     if not student or student.course_id != course_id:
         raise HTTPException(status_code=404, detail="Student not found in this course roster.")
+    if "section_id" in payload.model_fields_set:
+        if payload.section_id and not session.scalar(select(ClassSection).where(ClassSection.id == payload.section_id, ClassSection.course_id == course_id)):
+            raise HTTPException(status_code=422, detail="Section not found in this course.")
+        student.section_id = payload.section_id
     identifier = payload.identifier.strip()
     if identifier != student.identifier:
         has_submissions = session.scalar(
@@ -555,6 +662,7 @@ def list_course_exams(course_id: int, include_archived: bool = False, session: S
 @router.put("/exams/{exam_id}", response_model=ExamRead)
 def update_exam(exam_id: int, payload: ExamUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Exam:
     exam = owned_exam(exam_id, user, session)
+    editable_course(exam.course_id, user, session)
     exam.title = payload.title.strip()
     exam.description = payload.description.strip() if payload.description else None
     session.commit()
@@ -565,6 +673,7 @@ def update_exam(exam_id: int, payload: ExamUpdate, session: Session = Depends(ge
 @router.patch("/exams/{exam_id}/archive", response_model=ExamRead)
 def archive_exam(exam_id: int, payload: ArchiveUpdate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Exam:
     exam = owned_exam(exam_id, user, session)
+    editable_course(exam.course_id, user, session)
     exam.is_archived = payload.is_archived
     session.commit()
     session.refresh(exam)
@@ -831,7 +940,7 @@ def get_final_evaluation(submission_id: int, session: Session = Depends(get_sess
 @router.post("/submissions/{submission_id}/ocr", response_model=SubmissionRead, tags=["submissions"])
 async def rerun_submission_ocr(submission_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> SubmissionRead:
     """Retry local OCR for a scan that had no text or was uploaded before Tesseract was installed."""
-    submission = owned_submission(submission_id, user, session)
+    submission = editable_submission(submission_id, user, session)
     if submission.status in {"transcribed", "suggested", "finalized"}:
         raise HTTPException(status_code=409, detail="OCR cannot replace a teacher-reviewed transcript.")
     await run_submission_ocr(submission, session)
@@ -846,7 +955,7 @@ def save_extraction(
     user: User = Depends(get_current_user),
 ) -> SubmissionRead:
     """Save the teacher-reviewed version of the locally extracted transcript."""
-    submission = owned_submission(submission_id, user, session)
+    submission = editable_submission(submission_id, user, session)
     if submission.status == "finalized":
         raise HTTPException(status_code=409, detail="A finalized transcript cannot be changed.")
     submission.extracted_text = payload.extracted_text.strip()
@@ -858,7 +967,7 @@ def save_extraction(
 
 @router.post("/submissions/{submission_id}/evaluate", response_model=EvaluationRead, status_code=status.HTTP_201_CREATED, tags=["evaluation"])
 def create_baseline_evaluation(submission_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> EvaluationRead:
-    submission = owned_submission(submission_id, user, session)
+    submission = editable_submission(submission_id, user, session)
     latest_evaluation = session.scalar(
         select(Evaluation)
         .where(Evaluation.submission_id == submission_id)
@@ -914,7 +1023,7 @@ def finalize_evaluation(
     evaluation = session.get(Evaluation, evaluation_id)
     if not evaluation:
         raise HTTPException(status_code=404, detail="Score suggestion not found.")
-    owned_submission(evaluation.submission_id, user, session)
+    editable_submission(evaluation.submission_id, user, session)
     if session.scalar(select(FinalEvaluation).where(FinalEvaluation.evaluation_id == evaluation_id)):
         raise HTTPException(status_code=409, detail="This score suggestion has already been finalized.")
 
