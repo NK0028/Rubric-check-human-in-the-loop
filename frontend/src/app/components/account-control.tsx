@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type User = { name: string; email: string };
 
 export default function AccountControl() {
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
@@ -25,5 +26,6 @@ export default function AccountControl() {
   }
 
   if (!user) return null;
-  return <div className="fixed right-4 top-4 z-10 flex items-center gap-3 rounded-full border border-slate-700 bg-slate-900/95 px-3 py-2 text-xs shadow-lg"><Link href="/account" className="text-slate-200">{user.name}</Link><button type="button" onClick={signOut} className="font-semibold text-cyan-300">Sign out</button></div>;
+  const links = [["/dashboard", "Dashboard"], ["/setup", "Setup"], ["/submissions", "Intake"], ["/results", "Results"]] as const;
+  return <nav className="fixed left-4 right-4 top-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-900/95 px-4 py-3 text-sm shadow-lg"><div className="flex flex-wrap items-center gap-3">{links.map(([href, label]) => <Link key={href} href={href} className={pathname === href ? "font-semibold text-cyan-300" : "text-slate-300"}>{label}</Link>)}</div><div className="flex items-center gap-3"><Link href="/account" className="text-slate-200">{user.name}</Link><button type="button" onClick={signOut} className="font-semibold text-cyan-300">Sign out</button></div></nav>;
 }
