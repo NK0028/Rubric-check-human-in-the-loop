@@ -8,6 +8,8 @@ const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 type Course = { id: number; title: string; code: string; is_archived: boolean };
 type Exam = { id: number; title: string; course_id: number; description: string | null; is_archived: boolean };
 type Criterion = { title: string; description: string; max_marks: number };
+type RubricTemplate = { id: number; name: string; rubric: Criterion[] };
+type QuestionBankItem = { id: number; title: string; prompt: string; max_marks: number; reference_answer: string | null; rubric: Criterion[] };
 
 const defaultRubric: Criterion[] = [
   { title: "Proof / reasoning", description: "Checks whether the answer contains valid reasoning or proof.", max_marks: 2 },
@@ -32,6 +34,10 @@ export default function SetupPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [rubric, setRubric] = useState<Criterion[]>(defaultRubric);
   const [questionMaxMarks, setQuestionMaxMarks] = useState(6);
+  const [templates, setTemplates] = useState<RubricTemplate[]>([]);
+  const [questionBank, setQuestionBank] = useState<QuestionBankItem[]>([]);
+  const [questionPrompt, setQuestionPrompt] = useState("");
+  const [referenceAnswer, setReferenceAnswer] = useState("");
   const [notice, setNotice] = useState("Create your first course to begin.");
   const [saving, setSaving] = useState(false);
   const rubricTotal = useMemo(() => rubric.reduce((sum, item) => sum + Number(item.max_marks || 0), 0), [rubric]);
@@ -41,6 +47,7 @@ export default function SetupPage() {
       .then((items) => { setCourses(items); setNotice(items.length ? "Choose an existing course or create a new one." : "Create your first course to begin."); })
       .catch((error) => setNotice(error instanceof Error ? error.message : "Unable to load courses."));
   }, [showArchived]);
+  useEffect(() => { Promise.all([request<RubricTemplate[]>("/api/rubric-templates"), request<QuestionBankItem[]>("/api/question-bank")]).then(([savedTemplates, savedQuestions]) => { setTemplates(savedTemplates); setQuestionBank(savedQuestions); }).catch(() => undefined); }, []);
 
   async function selectCourse(event: ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value;
@@ -88,9 +95,10 @@ export default function SetupPage() {
     if (rubricTotal !== maxMarks) return setNotice(`Rubric total (${rubricTotal}) must equal question marks (${maxMarks}).`);
     setSaving(true);
     try {
-      await request("/api/questions", { method: "POST", body: JSON.stringify({ exam_id: Number(selectedExam), question_number: Number(form.get("question_number")), prompt: form.get("prompt"), max_marks: maxMarks, reference_answer: form.get("reference_answer") || null, rubric }) });
+      await request("/api/questions", { method: "POST", body: JSON.stringify({ exam_id: Number(selectedExam), question_number: Number(form.get("question_number")), prompt: questionPrompt, max_marks: maxMarks, reference_answer: referenceAnswer || null, rubric }) });
       event.currentTarget.reset();
       setQuestionMaxMarks(6);
+      setQuestionPrompt(""); setReferenceAnswer("");
       setNotice("Question and rubric saved. It is ready for answer-sheet evaluation.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Unable to save question."); } finally { setSaving(false); }
   }
@@ -131,6 +139,10 @@ export default function SetupPage() {
   function updateCriterion(index: number, key: keyof Criterion, value: string) {
     setRubric((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: key === "max_marks" ? Number(value) : value } : item));
   }
+  function applyTemplate(templateId: string) { const template = templates.find((item) => item.id === Number(templateId)); if (template) { setRubric(template.rubric); setQuestionMaxMarks(template.rubric.reduce((total, item) => total + item.max_marks, 0)); setNotice(`${template.name} applied. Adjust marks if needed.`); } }
+  function applyQuestionBank(itemId: string) { const item = questionBank.find((saved) => saved.id === Number(itemId)); if (item) { setQuestionPrompt(item.prompt); setReferenceAnswer(item.reference_answer ?? ""); setQuestionMaxMarks(item.max_marks); setRubric(item.rubric); setNotice(`${item.title} loaded from your question bank.`); } }
+  async function saveTemplate() { const name = window.prompt("Name this rubric template:"); if (!name) return; try { const template = await request<RubricTemplate>("/api/rubric-templates", { method: "POST", body: JSON.stringify({ name, rubric }) }); setTemplates((items) => [...items, template].sort((a, b) => a.name.localeCompare(b.name))); setNotice(`${template.name} saved to your assessment library.`); } catch (error) { setNotice(error instanceof Error ? error.message : "Could not save rubric template."); } }
+  async function saveQuestionBank() { if (!questionPrompt.trim()) return setNotice("Write a question before saving it to the bank."); const title = window.prompt("Give this question-bank item a short title:"); if (!title) return; try { const item = await request<QuestionBankItem>("/api/question-bank", { method: "POST", body: JSON.stringify({ title, prompt: questionPrompt, max_marks: questionMaxMarks, reference_answer: referenceAnswer || null, rubric }) }); setQuestionBank((items) => [...items, item].sort((a, b) => a.title.localeCompare(b.title))); setNotice(`${item.title} saved to your question bank.`); } catch (error) { setNotice(error instanceof Error ? error.message : "Could not save question-bank item."); } }
 
   const course = courses.find((item) => item.id === Number(selectedCourse));
   const exam = exams.find((item) => item.id === Number(selectedExam));
@@ -164,13 +176,14 @@ export default function SetupPage() {
 
         <form onSubmit={createQuestion} className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-6">
           <h2 className="text-xl font-semibold">3. Add question and marking rubric</h2>
+          <div className="mt-5 grid gap-3 md:grid-cols-2"><select onChange={(event) => applyTemplate(event.target.value)} className="field"><option value="">Apply a saved rubric template</option>{templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select><select onChange={(event) => applyQuestionBank(event.target.value)} className="field"><option value="">Load a question-bank item</option>{questionBank.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></div><div className="mt-3 flex flex-wrap gap-4 text-sm font-semibold text-cyan-400"><button type="button" onClick={saveTemplate}>Save current rubric as template</button><button type="button" onClick={saveQuestionBank}>Save current question to bank</button></div>
           <div className="mt-5 grid gap-3 md:grid-cols-[1fr_120px_120px]">
             <select required value={selectedExam} onChange={(event) => setSelectedExam(event.target.value)} className="field"><option value="">Select exam</option>{exams.map((exam) => <option key={exam.id} value={exam.id}>{exam.title}</option>)}</select>
             <input required name="question_number" type="number" min="1" placeholder="Question #" className="field" />
             <input required name="max_marks" type="number" min="0.5" step="0.5" value={questionMaxMarks} onChange={(event) => setQuestionMaxMarks(Number(event.target.value))} className="field" />
           </div>
-          <textarea required name="prompt" placeholder="Write the question shown to students..." className="field mt-3 min-h-28" />
-          <textarea name="reference_answer" placeholder="Optional reference answer or ideal solution..." className="field mt-3 min-h-24" />
+          <textarea required value={questionPrompt} onChange={(event) => setQuestionPrompt(event.target.value)} name="prompt" placeholder="Write the question shown to students..." className="field mt-3 min-h-28" />
+          <textarea value={referenceAnswer} onChange={(event) => setReferenceAnswer(event.target.value)} name="reference_answer" placeholder="Optional reference answer or ideal solution..." className="field mt-3 min-h-24" />
 
           <div className="mt-6 flex items-center justify-between"><h3 className="font-semibold">Rubric criteria</h3><span className={rubricTotal === questionMaxMarks ? "text-cyan-400" : "text-amber-300"}>Current total: {rubricTotal} / {questionMaxMarks} marks</span></div>
           <div className="mt-3 space-y-3">{rubric.map((criterion, index) => <div key={index} className="grid gap-3 rounded-lg border border-slate-800 p-3 md:grid-cols-[1fr_2fr_110px_auto]"><input value={criterion.title} onChange={(event) => updateCriterion(index, "title", event.target.value)} className="field" /><input value={criterion.description} onChange={(event) => updateCriterion(index, "description", event.target.value)} className="field" /><input value={criterion.max_marks} onChange={(event) => updateCriterion(index, "max_marks", event.target.value)} type="number" min="0.5" step="0.5" className="field" /><button type="button" onClick={() => setRubric((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="text-sm text-rose-300">Remove</button></div>)}</div>

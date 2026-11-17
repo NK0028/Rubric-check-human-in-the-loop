@@ -129,6 +129,36 @@ class RubricCriterionRead(ORMModel):
     expected_evidence: str | None
 
 
+class RubricTemplateCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    description: str | None = Field(default=None, max_length=2_000)
+    rubric: list[RubricCriterionCreate] = Field(min_length=1)
+
+
+class RubricTemplateRead(ORMModel):
+    id: int
+    name: str
+    description: str | None
+    rubric: list[RubricCriterionRead]
+
+
+class QuestionBankItemCreate(BaseModel):
+    title: str = Field(min_length=2, max_length=160)
+    prompt: str = Field(min_length=5)
+    max_marks: float = Field(gt=0)
+    reference_answer: str | None = None
+    rubric: list[RubricCriterionCreate] = Field(min_length=1)
+
+
+class QuestionBankItemRead(ORMModel):
+    id: int
+    title: str
+    prompt: str
+    max_marks: float
+    reference_answer: str | None
+    rubric: list[RubricCriterionRead]
+
+
 class QuestionCreate(BaseModel):
     exam_id: int
     question_number: int = Field(gt=0)

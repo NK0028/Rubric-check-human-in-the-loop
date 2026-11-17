@@ -24,7 +24,11 @@ from .models import (
     FinalEvaluation,
     FinalEvaluationCriterion,
     Question,
+    QuestionBankCriterion,
+    QuestionBankItem,
     RubricCriterion,
+    RubricTemplate,
+    RubricTemplateCriterion,
     Submission,
     Student,
     User,
@@ -44,9 +48,13 @@ from .schemas import (
     ExamUpdate,
     ExamProgressRead,
     QuestionCreate,
+    QuestionBankItemCreate,
+    QuestionBankItemRead,
     QuestionRead,
     QuestionProgressRead,
     RubricCriterionRead,
+    RubricTemplateCreate,
+    RubricTemplateRead,
     ExtractionUpdate,
     FinalEvaluationCreate,
     FinalEvaluationCriterionRead,
@@ -238,6 +246,19 @@ def question_response(question: Question, session: Session) -> QuestionRead:
         reference_answer=question.reference_answer,
         rubric=[RubricCriterionRead.model_validate(item) for item in rubric],
     )
+
+
+def stored_rubric_response(parent, criterion_model, parent_field: str, session: Session) -> list[RubricCriterionRead]:
+    criteria = session.scalars(select(criterion_model).where(getattr(criterion_model, parent_field) == parent.id).order_by(criterion_model.id)).all()
+    return [RubricCriterionRead.model_validate(criterion) for criterion in criteria]
+
+
+def rubric_template_response(template: RubricTemplate, session: Session) -> RubricTemplateRead:
+    return RubricTemplateRead(id=template.id, name=template.name, description=template.description, rubric=stored_rubric_response(template, RubricTemplateCriterion, "template_id", session))
+
+
+def question_bank_response(item: QuestionBankItem, session: Session) -> QuestionBankItemRead:
+    return QuestionBankItemRead(id=item.id, title=item.title, prompt=item.prompt, max_marks=item.max_marks, reference_answer=item.reference_answer, rubric=stored_rubric_response(item, QuestionBankCriterion, "item_id", session))
 
 
 def submission_response(submission: Submission) -> SubmissionRead:
@@ -678,6 +699,70 @@ def archive_exam(exam_id: int, payload: ArchiveUpdate, session: Session = Depend
     session.commit()
     session.refresh(exam)
     return exam
+
+
+@router.get("/rubric-templates", response_model=list[RubricTemplateRead], tags=["assessment library"])
+def list_rubric_templates(session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[RubricTemplateRead]:
+    templates = session.scalars(select(RubricTemplate).where(RubricTemplate.owner_id == user.id).order_by(RubricTemplate.name)).all()
+    return [rubric_template_response(template, session) for template in templates]
+
+
+@router.post("/rubric-templates", response_model=RubricTemplateRead, status_code=status.HTTP_201_CREATED, tags=["assessment library"])
+def create_rubric_template(payload: RubricTemplateCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> RubricTemplateRead:
+    template = RubricTemplate(owner_id=user.id, name=payload.name.strip(), description=payload.description.strip() if payload.description else None)
+    session.add(template)
+    session.flush()
+    session.add_all([RubricTemplateCriterion(template_id=template.id, **criterion.model_dump()) for criterion in payload.rubric])
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="You already have a rubric template with this name.") from error
+    return rubric_template_response(template, session)
+
+
+@router.delete("/rubric-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["assessment library"])
+def delete_rubric_template(template_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Response:
+    template = session.get(RubricTemplate, template_id)
+    if not template or template.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Rubric template not found.")
+    session.execute(delete(RubricTemplateCriterion).where(RubricTemplateCriterion.template_id == template.id))
+    session.delete(template)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/question-bank", response_model=list[QuestionBankItemRead], tags=["assessment library"])
+def list_question_bank(session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> list[QuestionBankItemRead]:
+    items = session.scalars(select(QuestionBankItem).where(QuestionBankItem.owner_id == user.id).order_by(QuestionBankItem.title)).all()
+    return [question_bank_response(item, session) for item in items]
+
+
+@router.post("/question-bank", response_model=QuestionBankItemRead, status_code=status.HTTP_201_CREATED, tags=["assessment library"])
+def create_question_bank_item(payload: QuestionBankItemCreate, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> QuestionBankItemRead:
+    if abs(sum(criterion.max_marks for criterion in payload.rubric) - payload.max_marks) > 0.001:
+        raise HTTPException(status_code=422, detail="Rubric criterion marks must equal the question's maximum marks.")
+    item = QuestionBankItem(owner_id=user.id, title=payload.title.strip(), prompt=payload.prompt.strip(), max_marks=payload.max_marks, reference_answer=payload.reference_answer.strip() if payload.reference_answer else None)
+    session.add(item)
+    session.flush()
+    session.add_all([QuestionBankCriterion(item_id=item.id, **criterion.model_dump()) for criterion in payload.rubric])
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="You already have a question-bank item with this title.") from error
+    return question_bank_response(item, session)
+
+
+@router.delete("/question-bank/{item_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["assessment library"])
+def delete_question_bank_item(item_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> Response:
+    item = session.get(QuestionBankItem, item_id)
+    if not item or item.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Question-bank item not found.")
+    session.execute(delete(QuestionBankCriterion).where(QuestionBankCriterion.item_id == item.id))
+    session.delete(item)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/questions", response_model=QuestionRead, status_code=status.HTTP_201_CREATED)

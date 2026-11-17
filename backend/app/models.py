@@ -103,6 +103,52 @@ class RubricCriterion(Base):
     expected_evidence: Mapped[str | None] = mapped_column(Text, default=None)
 
 
+class RubricTemplate(Base):
+    __tablename__ = "rubric_templates"
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_rubric_template_owner_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RubricTemplateCriterion(Base):
+    __tablename__ = "rubric_template_criteria"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    template_id: Mapped[int] = mapped_column(ForeignKey("rubric_templates.id"), index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text)
+    max_marks: Mapped[float] = mapped_column(Float)
+    expected_evidence: Mapped[str | None] = mapped_column(Text, default=None)
+
+
+class QuestionBankItem(Base):
+    __tablename__ = "question_bank_items"
+    __table_args__ = (UniqueConstraint("owner_id", "title", name="uq_question_bank_owner_title"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    prompt: Mapped[str] = mapped_column(Text)
+    max_marks: Mapped[float] = mapped_column(Float)
+    reference_answer: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class QuestionBankCriterion(Base):
+    __tablename__ = "question_bank_criteria"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("question_bank_items.id"), index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text)
+    max_marks: Mapped[float] = mapped_column(Float)
+    expected_evidence: Mapped[str | None] = mapped_column(Text, default=None)
+
+
 class Submission(Base):
     __tablename__ = "submissions"
 
