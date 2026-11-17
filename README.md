@@ -108,6 +108,20 @@ SQLite is retained only for local development. Existing SQLite data is not
 automatically copied to PostgreSQL; export or recreate operational data before
 pointing a production instance at a new database.
 
+### Container deployment smoke test
+
+Docker Compose starts PostgreSQL, the OCR-enabled FastAPI service, and the
+Next.js app with persistent database and answer-sheet volumes:
+
+```bash
+docker compose up --build
+```
+
+Open `http://localhost:3000` and confirm `http://localhost:8000/api/health`
+reports OCR as available. The compose password is intentionally local-only;
+replace all hostnames, origins, credentials, and `COOKIE_SECURE` values with
+production HTTPS settings in your deployment provider.
+
 ## Product principles
 
 1. Teachers define the rubric for every question.

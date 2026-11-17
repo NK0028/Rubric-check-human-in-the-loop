@@ -1,0 +1,39 @@
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: rubricheck
+      POSTGRES_USER: rubricheck
+      POSTGRES_PASSWORD: change-this-local-password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    depends_on:
+      - database
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://rubricheck:change-this-local-password@database:5432/rubricheck
+      UPLOADS_DIR: /var/lib/rubricheck/uploads
+      CORS_ORIGINS: http://localhost:3000
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      COOKIE_SECURE: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - answer_sheets:/var/lib/rubricheck/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+  answer_sheets:
