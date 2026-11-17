@@ -91,6 +91,23 @@ local backup, stop the API, replace `backend/rubricheck.db`, run
 `tar -xzf uploads.tar.gz -C backend/`, then start the API again. Production
 databases should use the managed backup process supplied by their provider.
 
+### PostgreSQL launch checklist
+
+1. Create a managed PostgreSQL database and set `DATABASE_URL` using the
+   `postgresql+psycopg://` scheme (use your provider's SSL option if required).
+2. Create a persistent, writable `UPLOADS_DIR`; database backups alone do not
+   include original answer-sheet scans.
+3. Install Tesseract on the API host and check `/api/health` returns
+   `"ocr": "available"` after deployment.
+4. Set the frontend's `NEXT_PUBLIC_API_URL` to the HTTPS API origin and list
+   the HTTPS frontend origin in `CORS_ORIGINS`.
+5. Run a one-time smoke test: register a teacher, create a course, upload a
+   non-sensitive test scan, and verify the student portal from a private browser.
+
+SQLite is retained only for local development. Existing SQLite data is not
+automatically copied to PostgreSQL; export or recreate operational data before
+pointing a production instance at a new database.
+
 ## Product principles
 
 1. Teachers define the rubric for every question.
