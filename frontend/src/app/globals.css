@@ -37,6 +37,20 @@ body {
 .button:disabled { cursor: not-allowed; opacity: 0.55; }
 .glass-card { border: 1px solid var(--border); border-radius: 1rem; background: linear-gradient(145deg, #0f172af0, #0b1224e8); box-shadow: 0 18px 50px #0000002e; }
 
+/* Shared operational-workspace treatment used by roster, results, and review pages. */
+main.min-h-screen { padding-top: 7rem !important; }
+.rounded-xl.border.border-slate-800.bg-slate-900 {
+  border-color: #263750;
+  background: linear-gradient(145deg, #0f172af2, #0b1224ed);
+  box-shadow: 0 18px 50px #00000025;
+}
+.rounded-lg.border.border-cyan-400\/25.bg-cyan-400\/10 {
+  border-color: #22d3ee33;
+  background: linear-gradient(90deg, #08334480, #0f172a99);
+}
+table tbody tr { transition: background .18s ease; }
+table tbody tr:hover { background: #1e293b55; }
+
 @media print {
   @page { margin: 18mm; }
   body { background: white; }
