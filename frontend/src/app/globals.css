@@ -51,6 +51,22 @@ main.min-h-screen { padding-top: 7rem !important; }
 table tbody tr { transition: background .18s ease; }
 table tbody tr:hover { background: #1e293b55; }
 
+/* Intake and review flow: make dense operational forms easier to scan. */
+main form.rounded-xl.border.border-slate-800.bg-slate-900,
+main form.rounded-xl.border.border-cyan-400\/30.bg-slate-900 {
+  position: relative;
+  overflow: hidden;
+}
+main form.rounded-xl.border.border-slate-800.bg-slate-900::before,
+main form.rounded-xl.border.border-cyan-400\/30.bg-slate-900::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(#67e8f9, #22d3ee55);
+}
+main .border-dashed { border-color: #22d3ee66; background: linear-gradient(135deg, #0833442e, #02061788); }
+
 @media print {
   @page { margin: 18mm; }
   body { background: white; }
