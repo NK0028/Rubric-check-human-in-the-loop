@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Cookie, Depends, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ from .schemas import (
     CourseCreate,
     CourseRead,
     CoursePortalRead,
+    CourseAnalyticsRead,
     CourseUpdate,
     ArchiveUpdate,
     CollaboratorCreate,
@@ -45,6 +46,7 @@ from .schemas import (
     EvaluationCriterionRead,
     EvaluationRead,
     ExamCreate,
+    ExamAnalyticsRead,
     ExamRead,
     ExamUpdate,
     ExamProgressRead,
@@ -529,6 +531,19 @@ def remove_collaborator(course_id: int, collaborator_user_id: int, session: Sess
     session.delete(collaborator)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/courses/{course_id}/analytics", response_model=CourseAnalyticsRead, tags=["analytics"])
+def get_course_analytics(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> CourseAnalyticsRead:
+    course = owned_course(course_id, user, session)
+    rostered_students = session.scalar(select(func.count(Student.id)).where(Student.course_id == course.id)) or 0
+    exams = session.scalars(select(Exam).where(Exam.course_id == course.id).order_by(Exam.created_at.desc())).all()
+    analytics: list[ExamAnalyticsRead] = []
+    for exam in exams:
+        gradebook = exam_gradebook(exam, session)
+        percentages = [round((row.awarded_total / row.maximum_marks) * 100, 2) for row in gradebook if row.maximum_marks > 0 and row.finalized_questions > 0]
+        analytics.append(ExamAnalyticsRead(exam_id=exam.id, exam_title=exam.title, rostered_students=rostered_students, students_with_final_marks=len(percentages), completion_rate=round((len(percentages) / rostered_students) * 100, 1) if rostered_students else 0, average_percentage=round(sum(percentages) / len(percentages), 1) if percentages else 0, highest_percentage=max(percentages) if percentages else 0, lowest_percentage=min(percentages) if percentages else 0))
+    return CourseAnalyticsRead(course_id=course.id, course_title=course.title, exams=analytics)
 
 
 @router.get("/courses/{course_id}/sections", response_model=list[SectionRead], tags=["sections"])

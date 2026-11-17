@@ -301,6 +301,23 @@ class StudentPortalRead(BaseModel):
     reports: list[StudentReportRead]
 
 
+class ExamAnalyticsRead(BaseModel):
+    exam_id: int
+    exam_title: str
+    rostered_students: int
+    students_with_final_marks: int
+    completion_rate: float
+    average_percentage: float
+    highest_percentage: float
+    lowest_percentage: float
+
+
+class CourseAnalyticsRead(BaseModel):
+    course_id: int
+    course_title: str
+    exams: list[ExamAnalyticsRead]
+
+
 class QuestionProgressRead(BaseModel):
     question_id: int
     question_number: int
