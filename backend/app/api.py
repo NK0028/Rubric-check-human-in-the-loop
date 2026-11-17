@@ -945,11 +945,12 @@ async def upload_submission(
 @router.post("/submissions/batch", response_model=BatchUploadRead, status_code=status.HTTP_201_CREATED, tags=["submissions"])
 async def upload_submission_batch(
     question_id: int = Form(...),
+    student_ids: str | None = Form(None),
     files: list[UploadFile] = File(...),
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> BatchUploadRead:
-    """Upload up to 20 scans whose filenames each contain one rostered student ID."""
+    """Upload scans with automatic filename matching or teacher-selected roster matches."""
     question = owned_question(question_id, user, session)
     active_exam(question.exam_id, user, session)
     if not files or len(files) > 20:
@@ -959,20 +960,35 @@ async def upload_submission_batch(
     roster = list(session.scalars(select(Student).where(Student.course_id == exam.course_id)))
     if not roster:
         raise HTTPException(status_code=422, detail="Add students to the course roster before using bulk upload.")
+    requested_ids: list[int | None] = []
+    if student_ids:
+        try:
+            requested_ids = [int(value) if value else None for value in student_ids.split(",")]
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="Invalid bulk-upload student matching data.") from error
+        if len(requested_ids) != len(files):
+            raise HTTPException(status_code=422, detail="Choose a student for every uploaded file.")
+    roster_by_id = {student.id: student for student in roster}
 
     prepared: list[tuple[UploadFile, str, bytes, Student]] = []
     matched_students: set[int] = set()
     total_size = 0
-    for file in files:
+    for index, file in enumerate(files):
         original_filename = file.filename or "answer-sheet"
         suffix = Path(original_filename).suffix.lower()
         if suffix not in allowed_upload_suffixes:
             raise HTTPException(status_code=415, detail=f"{original_filename}: upload a PDF, JPG, JPEG, PNG, or WEBP answer sheet.")
-        filename_key = original_filename.lower()
-        matches = [student for student in roster if student.identifier.lower() in filename_key]
-        if len(matches) != 1:
-            raise HTTPException(status_code=422, detail=f"{original_filename}: filename must contain exactly one rostered student ID.")
-        student = matches[0]
+        selected_id = requested_ids[index] if requested_ids else None
+        if selected_id:
+            student = roster_by_id.get(selected_id)
+            if not student:
+                raise HTTPException(status_code=422, detail=f"{original_filename}: selected student is not in this course roster.")
+        else:
+            filename_key = original_filename.lower()
+            matches = [student for student in roster if student.identifier.lower() in filename_key]
+            if len(matches) != 1:
+                raise HTTPException(status_code=422, detail=f"{original_filename}: choose the matching student manually.")
+            student = matches[0]
         if student.id in matched_students:
             raise HTTPException(status_code=422, detail=f"{original_filename}: only one answer sheet per student can be uploaded in a batch.")
         content = await file.read()
