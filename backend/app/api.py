@@ -1,4 +1,5 @@
 from pathlib import Path
+from secrets import token_urlsafe
 import csv
 from io import StringIO
 import re
@@ -507,6 +508,15 @@ def list_collaborators(course_id: int, session: Session = Depends(get_session), 
 @router.get("/courses/{course_id}/portal-code", response_model=CoursePortalRead, tags=["student portal"])
 def get_course_portal_code(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> CoursePortalRead:
     course = owner_course(course_id, user, session)
+    return CoursePortalRead(course_id=course.id, portal_code=course.portal_code)
+
+
+@router.post("/courses/{course_id}/portal-code/rotate", response_model=CoursePortalRead, tags=["student portal"])
+def rotate_course_portal_code(course_id: int, session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> CoursePortalRead:
+    course = owner_course(course_id, user, session)
+    course.portal_code = token_urlsafe(8)
+    record_audit(session, course.id, user, "rotated student portal code")
+    session.commit()
     return CoursePortalRead(course_id=course.id, portal_code=course.portal_code)
 
 
